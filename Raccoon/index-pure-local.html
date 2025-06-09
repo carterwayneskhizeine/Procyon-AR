@@ -1,0 +1,224 @@
+<html>
+
+<head>
+  <script type="module">
+    import * as THREE from 'three';
+    import { MindARThree } from "../src/face-target/three.js";
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // GPU信息检测和显示（和three-facemesh.html一样）
+    const checkGPUInfo = async () => {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+          const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+          
+          console.log('🎮 当前使用的GPU信息:');
+          console.log('供应商:', vendor);
+          console.log('渲染器:', renderer);
+          
+          // 在页面上显示GPU信息
+          const infoDiv = document.createElement('div');
+          infoDiv.id = 'gpu-info';
+          infoDiv.innerHTML = `
+            <div style="position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; z-index: 1000;">
+              <strong>🦝 浣熊AR - 纯本地源码</strong><br/>
+              供应商: ${vendor}<br/>
+              渲染器: ${renderer}<br/>
+              <span id="performance-info"></span>
+            </div>
+          `;
+          document.body.appendChild(infoDiv);
+          
+          // 检查是否使用了NVIDIA GPU
+          if (renderer.includes('NVIDIA') || renderer.includes('GeForce')) {
+            console.log('✅ 正在使用 NVIDIA 独显');
+            infoDiv.style.borderLeft = '4px solid green';
+          } else if (renderer.includes('Intel')) {
+            console.log('⚠️ 正在使用 Intel 核显，建议切换到独显');
+            infoDiv.style.borderLeft = '4px solid orange';
+          }
+        }
+      }
+    };
+
+    // 性能监控
+    const addPerformanceMonitor = () => {
+      let frameCount = 0;
+      let lastTime = performance.now();
+      
+      const updateFPS = () => {
+        frameCount++;
+        const currentTime = performance.now();
+        if (currentTime - lastTime >= 1000) {
+          const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+          const perfInfo = document.getElementById('performance-info');
+          if (perfInfo) {
+            perfInfo.innerHTML = `<br/>FPS: ${fps}`;
+          }
+          frameCount = 0;
+          lastTime = currentTime;
+        }
+        requestAnimationFrame(updateFPS);
+      };
+      updateFPS();
+    };
+
+    // 初始化GPU检测
+    await checkGPUInfo();
+    addPerformanceMonitor();
+
+    const mindarThree = new MindARThree({
+      container: document.querySelector("#container"),
+    });
+    const { renderer, scene, camera } = mindarThree;
+
+    // 强制WebGL上下文使用高性能GPU
+    const gl = renderer.getContext();
+    if (gl && gl.getExtension) {
+      // 尝试启用所有可能的GPU加速扩展
+      const extensions = [
+        'WEBGL_debug_renderer_info',
+        'EXT_texture_filter_anisotropic',
+        'OES_texture_float',
+        'OES_texture_half_float',
+        'WEBGL_color_buffer_float'
+      ];
+      
+      extensions.forEach(ext => {
+        try {
+          gl.getExtension(ext);
+        } catch (e) {
+          console.log(`扩展 ${ext} 不支持`);
+        }
+      });
+    }
+
+    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    scene.add(light);
+
+    // 浣熊Avatar类
+    class Avatar {
+      constructor() {
+        this.gltf = null;
+        this.morphTargetMeshes = [];
+      }
+      
+      async init() {
+        console.log('🦝 开始加载浣熊模型...');
+        const url = "./assets/raccoon_head.glb";
+        const loader = new GLTFLoader();
+        
+        const gltf = await new Promise((resolve, reject) => {
+          loader.load(url, resolve, undefined, reject);
+        });
+        
+        gltf.scene.traverse((object) => {
+          if (object.isBone && !this.root) {
+            this.root = object;
+          }
+          if (!object.isMesh) return;
+          
+          const mesh = object;
+          if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+          this.morphTargetMeshes.push(mesh);
+        });
+        
+        this.gltf = gltf;
+        console.log('✅ 浣熊模型加载成功');
+      }
+      
+      updateBlendshapes(blendshapes) {
+        const categories = blendshapes.categories;
+        let coefsMap = new Map();
+        
+        for (let i = 0; i < categories.length; ++i) {
+          coefsMap.set(categories[i].categoryName, categories[i].score);
+        }
+        
+        for (const mesh of this.morphTargetMeshes) {
+          if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) {
+            continue;
+          }
+          
+          for (const [name, value] of coefsMap) {
+            if (!Object.keys(mesh.morphTargetDictionary).includes(name)) {
+              continue;
+            }
+            const idx = mesh.morphTargetDictionary[name];
+            mesh.morphTargetInfluences[idx] = value;
+          }
+        }
+      }
+    }
+
+    // 创建浣熊Avatar
+    const avatar = new Avatar();
+    await avatar.init();
+
+    // 创建锚点并添加浣熊
+    const anchor = mindarThree.addAnchor(1);
+    avatar.gltf.scene.scale.set(2, 2, 2);
+    anchor.group.add(avatar.gltf.scene);
+
+    const start = async () => {
+      console.log('🚀 启动 浣熊面部跟踪（纯本地源码）...');
+      await mindarThree.start();
+      
+      // 添加视频流到右下角
+      const feedVideo = document.createElement('video');
+      feedVideo.id = 'video-feed';
+      feedVideo.style.cssText = `
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 50vw;
+        z-index: 9999999;
+        transform: scaleX(-1);
+        border: 2px solid #00ff00;
+        border-radius: 8px;
+      `;
+      document.body.appendChild(feedVideo);
+      
+      feedVideo.srcObject = mindarThree.video.srcObject.clone();
+      feedVideo.play();
+      
+      renderer.setAnimationLoop(() => {
+        // 更新浣熊表情
+        const estimate = mindarThree.getLatestEstimate();
+        if (estimate && estimate.blendshapes) {
+          avatar.updateBlendshapes(estimate.blendshapes);
+        }
+        
+        renderer.render(scene, camera);
+      });
+    }
+    start();
+  </script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      font-family: Arial, sans-serif;
+    }
+
+    #container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      overflow: hidden;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+  </div>
+</body>
+
+</html> 

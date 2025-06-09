@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🦝 Raccoon Face Tracking - 真·本地版</title>
+    
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #000;
+      }
+      #container {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+        overflow: hidden;
+      }
+      #video-feed {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 50vw;
+        z-index: 9999999;
+        transform: scaleX(-1);
+        border: 2px solid #00ff00;
+        border-radius: 8px;
+      }
+      #status {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(34, 139, 34, 0.9);
+        color: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        z-index: 1000;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      }
+      #info {
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-family: monospace;
+        font-size: 12px;
+        z-index: 1000;
+      }
+      .loading {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: white;
+        font-size: 18px;
+        z-index: 1001;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container"></div>
+    <video id="video-feed"></video>
+    <div id="status">🔄 初始化中...</div>
+    <div id="info">GPU: 检测中...</div>
+    <div class="loading" id="loading">🦝 加载本地源码...</div>
+
+    <script type="module">
+      // 使用本地的 MindAR 源码！
+      import * as THREE from 'three';
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+      import { MindARThree } from '../src/face-target/three.js';
+
+      console.log('🚀 开始初始化浣熊面部跟踪（真·本地版）...');
+      console.log('Three.js version:', THREE.REVISION);
+      console.log('🎯 使用本地 MindAR 源码');
+
+      // GPU信息检测
+      const checkGPU = () => {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        
+        if (gl) {
+          const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+          if (debugInfo) {
+            const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+            const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+            
+            console.log('🎮 当前使用的GPU信息:');
+            console.log('供应商:', vendor);
+            console.log('渲染器:', renderer);
+            
+            document.getElementById('info').textContent = `GPU: ${renderer}`;
+            
+            if (renderer.includes('NVIDIA') || renderer.includes('GeForce')) {
+              document.getElementById('info').style.borderLeft = '4px solid green';
+              console.log('✅ 正在使用 NVIDIA 独显');
+            } else if (renderer.includes('Intel')) {
+              document.getElementById('info').style.borderLeft = '4px solid orange';
+              console.log('⚠️ 正在使用 Intel 核显');
+            }
+          }
+        }
+      };
+      
+      class Avatar {
+        constructor() {
+          this.gltf = null;
+          this.morphTargetMeshes = [];
+        }
+        
+        updateStatus(message) {
+          document.getElementById('status').textContent = message;
+        }
+        
+        async init() {
+          console.log('🦝 开始加载浣熊模型...');
+          const url = "./assets/raccoon_head.glb";
+          const loader = new GLTFLoader();
+          
+          try {
+            const gltf = await new Promise((resolve, reject) => {
+              loader.load(url, resolve, 
+                (progress) => {
+                  const percent = Math.round((progress.loaded / progress.total) * 100);
+                  this.updateStatus(`🦝 加载模型: ${percent}%`);
+                },
+                reject
+              );
+            });
+            
+            gltf.scene.traverse((object) => {
+              if (object.isBone && !this.root) {
+                this.root = object;
+              }
+              if (!object.isMesh) return;
+              
+              const mesh = object;
+              if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+              this.morphTargetMeshes.push(mesh);
+            });
+            
+            this.gltf = gltf;
+            console.log('✅ 浣熊模型加载成功');
+            return true;
+          } catch (error) {
+            console.error('❌ 浣熊模型加载失败:', error);
+            this.updateStatus('❌ 模型加载失败');
+            return false;
+          }
+        }
+        
+        updateBlendshapes(blendshapes) {
+          const categories = blendshapes.categories;
+          let coefsMap = new Map();
+          
+          for (let i = 0; i < categories.length; ++i) {
+            coefsMap.set(categories[i].categoryName, categories[i].score);
+          }
+          
+          for (const mesh of this.morphTargetMeshes) {
+            if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) {
+              continue;
+            }
+            
+            for (const [name, value] of coefsMap) {
+              if (!Object.keys(mesh.morphTargetDictionary).includes(name)) {
+                continue;
+              }
+              const idx = mesh.morphTargetDictionary[name];
+              mesh.morphTargetInfluences[idx] = value;
+            }
+          }
+        }
+      }
+
+      let mindarThree = null;
+      let avatar = null;
+      let frameCount = 0;
+      let lastTime = performance.now();
+      
+      const updateFPS = () => {
+        frameCount++;
+        const currentTime = performance.now();
+        if (currentTime - lastTime >= 1000) {
+          const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+          const info = document.getElementById('info');
+          const gpuText = info.textContent.split('|')[0];
+          info.textContent = `${gpuText} | FPS: ${fps}`;
+          frameCount = 0;
+          lastTime = currentTime;
+        }
+      };
+      
+      const setup = async () => {
+        try {
+          avatar.updateStatus('🎭 初始化本地 MindAR...');
+          
+          mindarThree = new MindARThree({
+            container: document.querySelector("#container"),
+          });
+          
+          const { renderer, scene, camera } = mindarThree;
+          
+          // 添加光照
+          const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+          scene.add(light);
+          
+          // 创建锚点
+          const anchor = mindarThree.addAnchor(1);
+          
+          // 初始化Avatar
+          const success = await avatar.init();
+          if (!success) return false;
+          
+          avatar.gltf.scene.scale.set(2, 2, 2);
+          anchor.group.add(avatar.gltf.scene);
+          
+          avatar.updateStatus('✅ 本地源码就绪');
+          return true;
+          
+        } catch (error) {
+          console.error('Setup error:', error);
+          avatar.updateStatus('❌ 设置失败: ' + error.message);
+          return false;
+        }
+      };
+      
+      const start = async () => {
+        try {
+          if (!mindarThree) {
+            const setupSuccess = await setup();
+            if (!setupSuccess) return;
+          }
+          
+          avatar.updateStatus('📹 启动摄像头...');
+          await mindarThree.start();
+          
+          const { renderer, scene, camera } = mindarThree;
+          const feedVideo = document.querySelector("#video-feed");
+          feedVideo.srcObject = mindarThree.video.srcObject.clone();
+          feedVideo.play();
+          
+          document.getElementById('loading').style.display = 'none';
+          avatar.updateStatus('🎯 本地源码运行中');
+          
+          renderer.setAnimationLoop(() => {
+            const estimate = mindarThree.getLatestEstimate();
+            if (estimate && estimate.blendshapes) {
+              avatar.updateBlendshapes(estimate.blendshapes);
+            }
+            renderer.render(scene, camera);
+            updateFPS();
+          });
+          
+        } catch (error) {
+          console.error('Start error:', error);
+          avatar.updateStatus('❌ 启动失败: ' + error.message);
+          document.getElementById('loading').textContent = '❌ 启动失败';
+        }
+      };
+
+      // 初始化
+      avatar = new Avatar();
+      checkGPU();
+      
+      // 立即启动
+      start();
+    </script>
+  </body>
+</html> 

@@ -1,0 +1,139 @@
+<html>
+
+<head>
+  <script type="module">
+    import * as THREE from 'three';
+    import { MindARThree } from "../../src/face-target/three.js";
+
+    // GPU信息检测和显示
+    const checkGPUInfo = async () => {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      
+      if (gl) {
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+          const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+          
+          console.log('🎮 当前使用的GPU信息:');
+          console.log('供应商:', vendor);
+          console.log('渲染器:', renderer);
+          
+          // 在页面上显示GPU信息
+          const infoDiv = document.createElement('div');
+          infoDiv.id = 'gpu-info';
+          infoDiv.innerHTML = `
+            <div style="position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; z-index: 1000;">
+              <strong>🎮 GPU 信息</strong><br/>
+              供应商: ${vendor}<br/>
+              渲染器: ${renderer}<br/>
+              <span id="performance-info"></span>
+            </div>
+          `;
+          document.body.appendChild(infoDiv);
+          
+          // 检查是否使用了NVIDIA GPU
+          if (renderer.includes('NVIDIA') || renderer.includes('GeForce')) {
+            console.log('✅ 正在使用 NVIDIA 独显');
+            infoDiv.style.borderLeft = '4px solid green';
+          } else if (renderer.includes('Intel')) {
+            console.log('⚠️ 正在使用 Intel 核显，建议切换到独显');
+            infoDiv.style.borderLeft = '4px solid orange';
+          }
+        }
+      }
+    };
+
+    // 性能监控
+    const addPerformanceMonitor = () => {
+      let frameCount = 0;
+      let lastTime = performance.now();
+      
+      const updateFPS = () => {
+        frameCount++;
+        const currentTime = performance.now();
+        if (currentTime - lastTime >= 1000) {
+          const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+          const perfInfo = document.getElementById('performance-info');
+          if (perfInfo) {
+            perfInfo.innerHTML = `<br/>FPS: ${fps}`;
+          }
+          frameCount = 0;
+          lastTime = currentTime;
+        }
+        requestAnimationFrame(updateFPS);
+      };
+      updateFPS();
+    };
+
+    // 初始化GPU检测
+    await checkGPUInfo();
+    addPerformanceMonitor();
+
+    const mindarThree = new MindARThree({
+      container: document.querySelector("#container"),
+    });
+    const { renderer, scene, camera } = mindarThree;
+
+    // 强制WebGL上下文使用高性能GPU
+    const gl = renderer.getContext();
+    if (gl && gl.getExtension) {
+      // 尝试启用所有可能的GPU加速扩展
+      const extensions = [
+        'WEBGL_debug_renderer_info',
+        'EXT_texture_filter_anisotropic',
+        'OES_texture_float',
+        'OES_texture_half_float',
+        'WEBGL_color_buffer_float'
+      ];
+      
+      extensions.forEach(ext => {
+        try {
+          gl.getExtension(ext);
+        } catch (e) {
+          console.log(`扩展 ${ext} 不支持`);
+        }
+      });
+    }
+
+    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    scene.add(light);
+
+    const faceMesh = mindarThree.addFaceMesh();
+    const texture = new THREE.TextureLoader().load('./assets/canonical_face_model_uv_visualization.png');
+    faceMesh.material.map = texture;
+    faceMesh.material.transparent = true;
+    faceMesh.material.needsUpdate = true;
+    scene.add(faceMesh);
+
+    const start = async () => {
+      console.log('🚀 启动 MindAR Face Tracking...');
+      await mindarThree.start();
+      renderer.setAnimationLoop(() => {
+        renderer.render(scene, camera);
+      });
+    }
+    start();
+  </script>
+
+  <style>
+    body {
+      margin: 0;
+    }
+
+    #container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      overflow: hidden;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🦝 Raccoon Face Tracking - 兼容版</title>
+    
+    <!-- 使用UMD版本的Three.js确保兼容性 -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-three.prod.js"></script>
+    
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+      }
+      #container {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+        overflow: hidden;
+      }
+      #video-feed {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 50vw;
+        z-index: 9999999;
+        transform: scaleX(-1);
+      }
+      #status {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(34, 139, 34, 0.9);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        z-index: 1000;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container"></div>
+    <video id="video-feed"></video>
+    <div id="status">🔄 加载中...</div>
+
+    <script>
+      // 使用全局THREE对象
+      const { MindARThree } = window.MINDAR.FACE;
+      
+      class Avatar {
+        constructor() {
+          this.gltf = null;
+          this.morphTargetMeshes = [];
+        }
+        
+        async init() {
+          const url = "./assets/raccoon_head.glb";
+          const loader = new THREE.GLTFLoader();
+          
+          const gltf = await new Promise((resolve, reject) => {
+            loader.load(url, resolve, undefined, reject);
+          });
+          
+          gltf.scene.traverse((object) => {
+            if (object.isBone && !this.root) {
+              this.root = object;
+            }
+            if (!object.isMesh) return;
+            
+            const mesh = object;
+            if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+            this.morphTargetMeshes.push(mesh);
+          });
+          
+          this.gltf = gltf;
+        }
+        
+        updateBlendshapes(blendshapes) {
+          const categories = blendshapes.categories;
+          let coefsMap = new Map();
+          
+          for (let i = 0; i < categories.length; ++i) {
+            coefsMap.set(categories[i].categoryName, categories[i].score);
+          }
+          
+          for (const mesh of this.morphTargetMeshes) {
+            if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) {
+              continue;
+            }
+            
+            for (const [name, value] of coefsMap) {
+              if (!Object.keys(mesh.morphTargetDictionary).includes(name)) {
+                continue;
+              }
+              const idx = mesh.morphTargetDictionary[name];
+              mesh.morphTargetInfluences[idx] = value;
+            }
+          }
+        }
+      }
+
+      let mindarThree = null;
+      let avatar = null;
+      
+      const updateStatus = (message, color = 'rgba(34, 139, 34, 0.9)') => {
+        const status = document.getElementById('status');
+        status.textContent = message;
+        status.style.background = color;
+      };
+      
+      const setup = async () => {
+        try {
+          updateStatus('🎭 初始化MindAR...', 'rgba(255, 165, 0, 0.9)');
+          
+          mindarThree = new MindARThree({
+            container: document.querySelector("#container"),
+          });
+          
+          const { renderer, scene, camera } = mindarThree;
+          
+          // 添加光照
+          const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+          scene.add(light);
+          
+          // 创建锚点
+          const anchor = mindarThree.addAnchor(1);
+          
+          updateStatus('🦝 加载浣熊模型...', 'rgba(255, 165, 0, 0.9)');
+          
+          // 初始化Avatar
+          await avatar.init();
+          avatar.gltf.scene.scale.set(2, 2, 2);
+          anchor.group.add(avatar.gltf.scene);
+          
+          updateStatus('✅ 使用CDN资源运行', 'rgba(34, 139, 34, 0.9)');
+          
+        } catch (error) {
+          console.error('Setup error:', error);
+          updateStatus('❌ 加载失败: ' + error.message, 'rgba(255, 0, 0, 0.9)');
+        }
+      };
+      
+      const start = async () => {
+        try {
+          if (!mindarThree) {
+            await setup();
+          }
+          
+          updateStatus('📹 启动摄像头...', 'rgba(255, 165, 0, 0.9)');
+          await mindarThree.start();
+          
+          const { renderer, scene, camera } = mindarThree;
+          const feedVideo = document.querySelector("#video-feed");
+          feedVideo.srcObject = mindarThree.video.srcObject.clone();
+          feedVideo.play();
+          
+          updateStatus('🎯 面部跟踪中', 'rgba(34, 139, 34, 0.9)');
+          
+          renderer.setAnimationLoop(() => {
+            const estimate = mindarThree.getLatestEstimate();
+            if (estimate && estimate.blendshapes) {
+              avatar.updateBlendshapes(estimate.blendshapes);
+            }
+            renderer.render(scene, camera);
+          });
+          
+        } catch (error) {
+          console.error('Start error:', error);
+          updateStatus('❌ 启动失败: ' + error.message, 'rgba(255, 0, 0, 0.9)');
+        }
+      };
+
+      // 初始化
+      avatar = new Avatar();
+      
+      // 等待所有资源加载完成
+      window.addEventListener('load', () => {
+        start();
+      });
+    </script>
+  </body>
+</html> 
