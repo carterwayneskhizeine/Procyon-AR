@@ -95,6 +95,12 @@
       let lastSaveTime = 0;
       const SAVE_INTERVAL = 100; // 每100ms保存一次，避免过于频繁
       
+      // 🎬 画面合成相关变量
+      let compositeCanvas = null;
+      let compositeCtx = null;
+      let websocketServer = null;
+      let isCompositeEnabled = true;
+      
       // 创建颜色控制面板
       const createColorControlPanel = () => {
         const controlPanel = document.createElement('div');
@@ -582,8 +588,141 @@
         faceMesh.material.needsUpdate = true;
       };
       
+      // 🎬 画面合成系统初始化
+      const initCompositeSystem = () => {
+        console.log('🎬 初始化画面合成系统...');
+        
+        // 创建合成画布
+        compositeCanvas = document.createElement('canvas');
+        compositeCanvas.width = 640;
+        compositeCanvas.height = 480;
+        compositeCtx = compositeCanvas.getContext('2d');
+        
+        // 初始化WebSocket服务器
+        initWebSocketServer();
+        
+        console.log('✅ 画面合成系统初始化完成');
+      };
+      
+      // 🌐 初始化WebSocket服务器
+      const initWebSocketServer = () => {
+        try {
+          // 尝试连接到WebSocket服务器
+          websocketServer = new WebSocket('ws://localhost:3002?type=sender');
+          
+          websocketServer.onopen = () => {
+            console.log('✅ WebSocket服务器连接成功');
+            isCompositeEnabled = true;
+          };
+          
+          websocketServer.onclose = () => {
+            console.log('❌ WebSocket服务器连接断开');
+            isCompositeEnabled = false;
+            
+            // 5秒后尝试重连
+            setTimeout(() => {
+              if (!isCompositeEnabled) {
+                initWebSocketServer();
+              }
+            }, 5000);
+          };
+          
+          websocketServer.onerror = (error) => {
+            console.warn('⚠️ WebSocket连接失败，将使用HTTP API备选方案:', error);
+            isCompositeEnabled = false;
+          };
+          
+        } catch (error) {
+          console.warn('⚠️ WebSocket初始化失败，将使用HTTP API备选方案:', error);
+          isCompositeEnabled = false;
+        }
+      };
+      
+      // 🎬 合成两层画面为单层像素画面
+      const createCompositeFrame = (videoElement, threeRenderer, scene, camera) => {
+        if (!compositeCanvas || !compositeCtx || !videoElement) return null;
+        
+        try {
+          // 确保画布尺寸与视频匹配
+          if (compositeCanvas.width !== videoElement.videoWidth || 
+              compositeCanvas.height !== videoElement.videoHeight) {
+            compositeCanvas.width = videoElement.videoWidth || 640;
+            compositeCanvas.height = videoElement.videoHeight || 480;
+          }
+          
+          // 清空画布
+          compositeCtx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+          
+          // 第一层：绘制原始视频画面（不翻转，保持原始方向）
+          compositeCtx.drawImage(videoElement, 0, 0, compositeCanvas.width, compositeCanvas.height);
+          
+          // 第二层：获取Three.js渲染结果
+          const threeCanvas = threeRenderer.domElement;
+          if (threeCanvas) {
+            // 设置混合模式为正常模式，确保真实像素合成
+            compositeCtx.globalCompositeOperation = 'source-over';
+            
+            // 绘制Three.js渲染的面部网格（水平翻转以匹配视频）
+            compositeCtx.save();
+            compositeCtx.scale(-1, 1); // 水平翻转
+            compositeCtx.translate(-compositeCanvas.width, 0);
+            compositeCtx.drawImage(threeCanvas, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            compositeCtx.restore();
+          }
+          
+          // 重置混合模式
+          compositeCtx.globalCompositeOperation = 'source-over';
+          
+          return compositeCanvas;
+          
+        } catch (error) {
+          console.error('❌ 画面合成失败:', error);
+          return null;
+        }
+      };
+      
+      // 🚀 发送合成画面
+      const sendCompositeFrame = (compositeCanvas) => {
+        if (!compositeCanvas || !isCompositeEnabled) return;
+        
+        try {
+          // 转换为Blob数据
+          compositeCanvas.toBlob((blob) => {
+            if (websocketServer && websocketServer.readyState === WebSocket.OPEN) {
+              // 通过WebSocket发送
+              websocketServer.send(blob);
+            } else {
+              // 备选方案：通过HTTP API发送
+              sendCompositeFrameHTTP(blob);
+            }
+          }, 'image/jpeg', 0.85); // 使用JPEG格式，85%质量
+          
+        } catch (error) {
+          console.error('❌ 发送合成画面失败:', error);
+        }
+      };
+      
+      // 📡 HTTP API备选方案
+      const sendCompositeFrameHTTP = async (blob) => {
+        try {
+          const formData = new FormData();
+          formData.append('composite-frame', blob, 'composite.jpg');
+          
+          await fetch('http://localhost:3001/api/composite-frame', {
+            method: 'POST',
+            body: formData
+          });
+          
+        } catch (error) {
+          console.warn('⚠️ HTTP发送合成画面失败:', error);
+        }
+      };
+      
       // 创建控制面板
       createColorControlPanel();
+      
+      // 🎬 初始化画面合成系统
+      initCompositeSystem();
       
       const mindarThree = new MindARThree({
         container: document.querySelector("#container"),
@@ -689,7 +828,19 @@
             updateTrackingStatus();
           }
           
+          // 先渲染场景
           renderer.render(scene, camera);
+          
+          // 🎬 画面合成：创建单层合成画面
+          if (isCompositeEnabled && mindarThree.video) {
+            const compositeFrame = createCompositeFrame(mindarThree.video, renderer, scene, camera);
+            if (compositeFrame) {
+              // 限制发送频率为30fps
+              if (colorUpdateCounter % 2 === 0) {
+                sendCompositeFrame(compositeFrame);
+              }
+            }
+          }
         });
       }
       

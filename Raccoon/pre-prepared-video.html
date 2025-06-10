@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎬 Pre-prepared Video Stream - 合成画面显示器</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #compositeCanvas {
+            max-width: 100vw;
+            max-height: 100vh;
+            border: 2px solid #FFD700;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+        }
+
+        #info-panel {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            z-index: 1000;
+            border-left: 4px solid #FFD700;
+        }
+
+        #controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+
+        .control-group {
+            margin-bottom: 10px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+
+        input[type="range"] {
+            width: 200px;
+        }
+
+        button {
+            background: #FFD700;
+            color: #000;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin: 2px;
+        }
+
+        button:hover {
+            background: #FFA500;
+        }
+
+        #status {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 11px;
+            z-index: 1000;
+        }
+
+        .error {
+            color: #ff6b6b;
+        }
+
+        .success {
+            color: #4ecdc4;
+        }
+
+        .warning {
+            color: #ffa726;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="compositeCanvas"></canvas>
+    </div>
+
+    <div id="info-panel">
+        <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎬 合成画面显示器</h3>
+        <div><strong>状态:</strong> <span id="connectionStatus">等待连接...</span></div>
+        <div><strong>分辨率:</strong> <span id="resolution">-</span></div>
+        <div><strong>帧率:</strong> <span id="fps">0</span> FPS</div>
+        <div><strong>数据源:</strong> <span id="dataSource">WebSocket</span></div>
+        <div><strong>合成模式:</strong> <span id="compositeMode">实时合成</span></div>
+    </div>
+
+    <div id="controls">
+        <h4 style="margin: 0 0 10px 0; color: #FFD700;">显示控制</h4>
+        
+        <div class="control-group">
+            <label>画面缩放: <span id="scaleValue">100%</span></label>
+            <input type="range" id="scaleSlider" min="50" max="200" value="100">
+        </div>
+
+        <div class="control-group">
+            <label>亮度调节: <span id="brightnessValue">100%</span></label>
+            <input type="range" id="brightnessSlider" min="50" max="150" value="100">
+        </div>
+
+        <div class="control-group">
+            <label>对比度: <span id="contrastValue">100%</span></label>
+            <input type="range" id="contrastSlider" min="50" max="150" value="100">
+        </div>
+
+        <div class="control-group">
+            <button id="fullscreenBtn">全屏显示</button>
+            <button id="saveFrameBtn">保存当前帧</button>
+        </div>
+
+        <div class="control-group">
+            <button id="resetBtn">重置设置</button>
+            <button id="reconnectBtn">重新连接</button>
+        </div>
+    </div>
+
+    <div id="status">
+        <div id="statusText">准备接收合成画面...</div>
+        <div id="errorLog"></div>
+    </div>
+
+    <script>
+        class CompositeVideoReceiver {
+            constructor() {
+                this.canvas = document.getElementById('compositeCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.websocket = null;
+                this.isConnected = false;
+                this.frameCount = 0;
+                this.startTime = Date.now();
+                this.scale = 1.0;
+                this.brightness = 1.0;
+                this.contrast = 1.0;
+                
+                this.initializeUI();
+                this.connectToSource();
+                this.setupControls();
+            }
+
+            initializeUI() {
+                // 设置画布初始尺寸
+                this.canvas.width = 640;
+                this.canvas.height = 480;
+                
+                // 显示等待画面
+                this.drawWaitingScreen();
+            }
+
+            drawWaitingScreen() {
+                this.ctx.fillStyle = '#1a1a1a';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                this.ctx.fillStyle = '#FFD700';
+                this.ctx.font = '24px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('🎬 等待合成画面...', this.canvas.width / 2, this.canvas.height / 2 - 20);
+                
+                this.ctx.fillStyle = '#888';
+                this.ctx.font = '14px Arial';
+                this.ctx.fillText('请确保 index-pure-texture.html 正在运行', this.canvas.width / 2, this.canvas.height / 2 + 20);
+            }
+
+            connectToSource() {
+                try {
+                    // 连接到 WebSocket 服务器接收合成画面
+                    this.websocket = new WebSocket('ws://localhost:3002?type=receiver');
+                    
+                    this.websocket.onopen = () => {
+                        console.log('✅ WebSocket 连接成功');
+                        this.isConnected = true;
+                        this.updateStatus('已连接', 'success');
+                        document.getElementById('connectionStatus').textContent = '已连接';
+                        document.getElementById('connectionStatus').className = 'success';
+                    };
+
+                    this.websocket.onmessage = (event) => {
+                        this.handleCompositeFrame(event.data);
+                    };
+
+                    this.websocket.onclose = () => {
+                        console.log('❌ WebSocket 连接断开');
+                        this.isConnected = false;
+                        this.updateStatus('连接断开', 'error');
+                        document.getElementById('connectionStatus').textContent = '连接断开';
+                        document.getElementById('connectionStatus').className = 'error';
+                        
+                        // 5秒后自动重连
+                        setTimeout(() => {
+                            if (!this.isConnected) {
+                                this.connectToSource();
+                            }
+                        }, 5000);
+                    };
+
+                    this.websocket.onerror = (error) => {
+                        console.error('❌ WebSocket 错误:', error);
+                        this.updateStatus('连接错误', 'error');
+                    };
+
+                } catch (error) {
+                    console.error('❌ 连接失败:', error);
+                    this.updateStatus('连接失败: ' + error.message, 'error');
+                    
+                    // 备用方案：使用 HTTP 轮询
+                    this.startHttpPolling();
+                }
+            }
+
+            startHttpPolling() {
+                console.log('🔄 启动 HTTP 轮询模式...');
+                this.updateStatus('使用 HTTP 轮询模式', 'warning');
+                
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const response = await fetch('http://localhost:3001/api/get-composite-frame');
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            this.handleCompositeFrame(blob);
+                        }
+                    } catch (error) {
+                        console.warn('HTTP 轮询失败:', error);
+                    }
+                }, 33); // ~30 FPS
+            }
+
+            handleCompositeFrame(data) {
+                try {
+                    // 处理接收到的合成画面数据
+                    const img = new Image();
+                    
+                    img.onload = () => {
+                        // 更新画布尺寸（如果需要）
+                        if (this.canvas.width !== img.width || this.canvas.height !== img.height) {
+                            this.canvas.width = img.width;
+                            this.canvas.height = img.height;
+                            document.getElementById('resolution').textContent = `${img.width}x${img.height}`;
+                        }
+
+                        // 应用图像处理效果
+                        this.ctx.filter = `brightness(${this.brightness}) contrast(${this.contrast})`;
+                        
+                        // 绘制合成画面
+                        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                        
+                        // 计算缩放后的尺寸
+                        const scaledWidth = img.width * this.scale;
+                        const scaledHeight = img.height * this.scale;
+                        const x = (this.canvas.width - scaledWidth) / 2;
+                        const y = (this.canvas.height - scaledHeight) / 2;
+                        
+                        this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+                        
+                        // 重置滤镜
+                        this.ctx.filter = 'none';
+                        
+                        // 更新帧率计算
+                        this.updateFrameRate();
+                    };
+
+                    img.onerror = (error) => {
+                        console.error('❌ 图片加载失败:', error);
+                        this.updateStatus('图片加载失败', 'error');
+                    };
+
+                    // 根据数据类型加载图片
+                    if (data instanceof Blob) {
+                        img.src = URL.createObjectURL(data);
+                    } else if (typeof data === 'string') {
+                        img.src = data; // Base64 数据
+                    }
+
+                } catch (error) {
+                    console.error('❌ 处理合成画面失败:', error);
+                    this.updateStatus('处理画面失败: ' + error.message, 'error');
+                }
+            }
+
+            updateFrameRate() {
+                this.frameCount++;
+                const currentTime = Date.now();
+                const elapsed = (currentTime - this.startTime) / 1000;
+                
+                if (elapsed >= 1) {
+                    const fps = Math.round(this.frameCount / elapsed);
+                    document.getElementById('fps').textContent = fps;
+                    
+                    // 重置计数器
+                    this.frameCount = 0;
+                    this.startTime = currentTime;
+                }
+            }
+
+            setupControls() {
+                // 缩放控制
+                const scaleSlider = document.getElementById('scaleSlider');
+                const scaleValue = document.getElementById('scaleValue');
+                
+                scaleSlider.addEventListener('input', (e) => {
+                    this.scale = e.target.value / 100;
+                    scaleValue.textContent = e.target.value + '%';
+                });
+
+                // 亮度控制
+                const brightnessSlider = document.getElementById('brightnessSlider');
+                const brightnessValue = document.getElementById('brightnessValue');
+                
+                brightnessSlider.addEventListener('input', (e) => {
+                    this.brightness = e.target.value / 100;
+                    brightnessValue.textContent = e.target.value + '%';
+                });
+
+                // 对比度控制
+                const contrastSlider = document.getElementById('contrastSlider');
+                const contrastValue = document.getElementById('contrastValue');
+                
+                contrastSlider.addEventListener('input', (e) => {
+                    this.contrast = e.target.value / 100;
+                    contrastValue.textContent = e.target.value + '%';
+                });
+
+                // 全屏按钮
+                document.getElementById('fullscreenBtn').addEventListener('click', () => {
+                    if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                    } else {
+                        document.documentElement.requestFullscreen();
+                    }
+                });
+
+                // 保存当前帧
+                document.getElementById('saveFrameBtn').addEventListener('click', () => {
+                    this.saveCurrentFrame();
+                });
+
+                // 重置设置
+                document.getElementById('resetBtn').addEventListener('click', () => {
+                    this.resetSettings();
+                });
+
+                // 重新连接
+                document.getElementById('reconnectBtn').addEventListener('click', () => {
+                    this.reconnect();
+                });
+            }
+
+            saveCurrentFrame() {
+                try {
+                    const link = document.createElement('a');
+                    link.download = `composite-frame-${Date.now()}.png`;
+                    link.href = this.canvas.toDataURL();
+                    link.click();
+                    
+                    this.updateStatus('当前帧已保存', 'success');
+                } catch (error) {
+                    console.error('❌ 保存失败:', error);
+                    this.updateStatus('保存失败: ' + error.message, 'error');
+                }
+            }
+
+            resetSettings() {
+                this.scale = 1.0;
+                this.brightness = 1.0;
+                this.contrast = 1.0;
+                
+                document.getElementById('scaleSlider').value = 100;
+                document.getElementById('scaleValue').textContent = '100%';
+                document.getElementById('brightnessSlider').value = 100;
+                document.getElementById('brightnessValue').textContent = '100%';
+                document.getElementById('contrastSlider').value = 100;
+                document.getElementById('contrastValue').textContent = '100%';
+                
+                this.updateStatus('设置已重置', 'success');
+            }
+
+            reconnect() {
+                if (this.websocket) {
+                    this.websocket.close();
+                }
+                this.updateStatus('正在重新连接...', 'warning');
+                setTimeout(() => {
+                    this.connectToSource();
+                }, 1000);
+            }
+
+            updateStatus(message, type = 'info') {
+                const statusText = document.getElementById('statusText');
+                statusText.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+                statusText.className = type;
+                
+                console.log(`📊 [${type.toUpperCase()}] ${message}`);
+            }
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('🎬 合成画面显示器已启动');
+            const receiver = new CompositeVideoReceiver();
+            
+            // 全局错误处理
+            window.addEventListener('error', (error) => {
+                console.error('❌ 全局错误:', error);
+                receiver.updateStatus('系统错误: ' + error.message, 'error');
+            });
+
+            // 页面可见性变化处理
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    console.log('📴 页面隐藏，暂停接收');
+                } else {
+                    console.log('📺 页面显示，恢复接收');
+                    receiver.reconnect();
+                }
+            });
+        });
+    </script>
+</body>
+</html> 
