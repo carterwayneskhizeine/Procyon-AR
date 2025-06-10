@@ -1,39 +1,478 @@
-
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script type="module">
       import * as THREE from 'three';
       import { MindARThree } from '../src/face-target/three.js';
+      
+      // 🎨 共享调色板配置管理
+      const ColorPaletteManager = {
+        // 默认配置
+        defaultConfig: {
+          customColor: { r: 0.9, g: 0.7, b: 0.6 },
+          colorIntensity: 0.8,
+          colorMode: 'multiply',
+          useAutoColor: true,
+          redValue: 230,
+          greenValue: 179,
+          blueValue: 153,
+          materialOpacity: 0.7  // 默认70%透明度
+        },
+        
+        // 从localStorage加载配置
+        loadConfig() {
+          try {
+            const savedConfig = localStorage.getItem('raccoon-color-palette');
+            if (savedConfig) {
+              const config = JSON.parse(savedConfig);
+              console.log('✅ 已加载保存的调色板配置');
+              return { ...this.defaultConfig, ...config };
+            }
+          } catch (error) {
+            console.warn('⚠️ 加载调色板配置失败，使用默认配置:', error);
+          }
+          return this.defaultConfig;
+        },
+        
+        // 保存配置到localStorage
+        saveConfig(config) {
+          try {
+            localStorage.setItem('raccoon-color-palette', JSON.stringify(config));
+            console.log('💾 调色板配置已保存');
+          } catch (error) {
+            console.warn('⚠️ 保存调色板配置失败:', error);
+          }
+        },
+        
+        // 获取当前配置
+        getCurrentConfig() {
+          return {
+            customColor: {
+              r: customColor.r,
+              g: customColor.g,
+              b: customColor.b
+            },
+            colorIntensity,
+            colorMode,
+            useAutoColor,
+            redValue: Math.round(customColor.r * 255),
+            greenValue: Math.round(customColor.g * 255),
+            blueValue: Math.round(customColor.b * 255),
+            materialOpacity
+          };
+        }
+      };
+      
+      // 加载保存的配置
+      const savedConfig = ColorPaletteManager.loadConfig();
+      
+      // 🎨 颜色控制设置 - 使用保存的配置初始化
+      let customColor = new THREE.Color(savedConfig.customColor.r, savedConfig.customColor.g, savedConfig.customColor.b);
+      let colorIntensity = savedConfig.colorIntensity;
+      let colorMode = savedConfig.colorMode;
+      let useAutoColor = savedConfig.useAutoColor;
+      
+      // 🔍 透明度控制设置
+      let materialOpacity = savedConfig.materialOpacity || 0.7; // 默认70%透明度，让人脸可见
+      
+      // 颜色采样相关变量
+      let colorCanvas = null;
+      let colorCtx = null;
+      let lastFaceColor = new THREE.Color(0.8, 0.6, 0.5);
+      let colorUpdateCounter = 0;
+      let originalMaterial = null; // 保存原始材质
+      let unlitMaterial = null; // 🔍 全局材质引用，用于透明度控制
+      
+      // 创建颜色控制面板
+      const createColorControlPanel = () => {
+        const controlPanel = document.createElement('div');
+        controlPanel.id = 'color-control-panel';
+        controlPanel.innerHTML = `
+          <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; z-index: 1001; width: 250px;">
+            <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 (Tige半透明版)</h3>
+            
+            <div style="margin-bottom: 10px;">
+              <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
+              <select id="colorModeSelect" style="width: 100%; padding: 3px; background: #333; color: white; border: 1px solid #555;">
+                <option value="multiply">乘法混合 (推荐)</option>
+                <option value="overlay">叠加混合</option>
+                <option value="lerp">线性插值</option>
+              </select>
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+              <label style="display: block; margin-bottom: 5px;">
+                <input type="checkbox" id="useAutoColorCheck" ${useAutoColor ? 'checked' : ''}> 自动肤色采样
+              </label>
+            </div>
+            
+            <div id="manualColorControls" style="display: ${useAutoColor ? 'none' : 'block'};">
+              <div style="margin-bottom: 8px;">
+                <label style="display: block; margin-bottom: 3px;">自定义颜色:</label>
+                <input type="color" id="customColorPicker" style="width: 100%; height: 30px; border: none; border-radius: 4px;">
+              </div>
+            </div>
+            
+            <div style="margin-bottom: 8px;">
+              <label style="display: block; margin-bottom: 3px;">强度: <span id="intensityValue">${Math.round(colorIntensity * 100)}%</span></label>
+              <input type="range" id="intensitySlider" min="0" max="100" value="${Math.round(colorIntensity * 100)}" style="width: 100%;">
+            </div>
+            
+            <div style="margin-bottom: 8px;">
+              <label style="display: block; margin-bottom: 3px;">透明度: <span id="opacityValue">${Math.round(materialOpacity * 100)}%</span></label>
+              <input type="range" id="opacitySlider" min="0" max="100" value="${Math.round(materialOpacity * 100)}" style="width: 100%;">
+            </div>
+            
+            <div style="margin-bottom: 8px;">
+              <label style="display: block; margin-bottom: 3px;">红色: <span id="redValue">${savedConfig.redValue}</span></label>
+              <input type="range" id="redSlider" min="0" max="255" value="${savedConfig.redValue}" style="width: 100%;">
+            </div>
+            
+            <div style="margin-bottom: 8px;">
+              <label style="display: block; margin-bottom: 3px;">绿色: <span id="greenValue">${savedConfig.greenValue}</span></label>
+              <input type="range" id="greenSlider" min="0" max="255" value="${savedConfig.greenValue}" style="width: 100%;">
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+              <label style="display: block; margin-bottom: 3px;">蓝色: <span id="blueValue">${savedConfig.blueValue}</span></label>
+              <input type="range" id="blueSlider" min="0" max="255" value="${savedConfig.blueValue}" style="width: 100%;">
+            </div>
+            
+            <div style="background: #333; padding: 8px; border-radius: 4px; text-align: center;">
+              <div id="colorPreview" style="width: 100%; height: 20px; border-radius: 3px; margin-bottom: 5px;"></div>
+              <span id="colorHex"></span>
+            </div>
+            
+            <div style="margin-top: 10px; text-align: center;">
+              <button id="resetColorBtn" style="background: #555; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-right: 5px;">重置</button>
+              <button id="warmToneBtn" style="background: #8B4513; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">暖色调</button>
+            </div>
+            
+            <div style="margin-top: 8px; font-size: 10px; color: #888; text-align: center;">
+              配置自动同步到Local版本<br/>
+              🎭 透明度遮罩 + 半透明 | ShaderMaterial<br/>
+              眼睛和嘴部完全透明
+            </div>
+          </div>
+        `;
+        document.body.appendChild(controlPanel);
+        
+        setupColorControlEvents();
+      };
+      
+      // 设置颜色控制事件
+      const setupColorControlEvents = () => {
+        const colorModeSelect = document.getElementById('colorModeSelect');
+        const useAutoColorCheck = document.getElementById('useAutoColorCheck');
+        const manualColorControls = document.getElementById('manualColorControls');
+        const customColorPicker = document.getElementById('customColorPicker');
+        const intensitySlider = document.getElementById('intensitySlider');
+        const opacitySlider = document.getElementById('opacitySlider');
+        const redSlider = document.getElementById('redSlider');
+        const greenSlider = document.getElementById('greenSlider');
+        const blueSlider = document.getElementById('blueSlider');
+        
+        // 设置初始值
+        colorModeSelect.value = colorMode;
+        
+        // 自动保存配置的函数
+        const saveCurrentConfig = () => {
+          const config = ColorPaletteManager.getCurrentConfig();
+          ColorPaletteManager.saveConfig(config);
+        };
+        
+        // 颜色模式切换
+        colorModeSelect.addEventListener('change', (e) => {
+          colorMode = e.target.value;
+          saveCurrentConfig();
+        });
+        
+        // 自动/手动颜色切换
+        useAutoColorCheck.addEventListener('change', (e) => {
+          useAutoColor = e.target.checked;
+          manualColorControls.style.display = useAutoColor ? 'none' : 'block';
+          saveCurrentConfig();
+        });
+        
+        // 更新颜色的函数
+        const updateColor = () => {
+          const r = parseInt(redSlider.value);
+          const g = parseInt(greenSlider.value);
+          const b = parseInt(blueSlider.value);
+          
+          customColor.setRGB(r / 255, g / 255, b / 255);
+          colorIntensity = parseInt(intensitySlider.value) / 100;
+          materialOpacity = parseInt(opacitySlider.value) / 100;
+          
+          // 🔍 实时更新材质透明度 (Shader材质)
+          if (unlitMaterial && unlitMaterial.uniforms) {
+            unlitMaterial.uniforms.opacity.value = materialOpacity;
+            unlitMaterial.needsUpdate = true;
+          }
+          
+          // 更新显示
+          document.getElementById('redValue').textContent = r;
+          document.getElementById('greenValue').textContent = g;
+          document.getElementById('blueValue').textContent = b;
+          document.getElementById('intensityValue').textContent = Math.round(colorIntensity * 100) + '%';
+          document.getElementById('opacityValue').textContent = Math.round(materialOpacity * 100) + '%';
+          
+          const colorPreview = document.getElementById('colorPreview');
+          const colorHex = document.getElementById('colorHex');
+          const hexColor = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+          
+          colorPreview.style.background = `rgba(${r}, ${g}, ${b}, ${materialOpacity})`;
+          colorHex.textContent = hexColor;
+          customColorPicker.value = hexColor;
+          
+          // 自动保存配置
+          saveCurrentConfig();
+        };
+        
+        // 绑定滑块事件
+        intensitySlider.addEventListener('input', updateColor);
+        opacitySlider.addEventListener('input', updateColor);
+        redSlider.addEventListener('input', updateColor);
+        greenSlider.addEventListener('input', updateColor);
+        blueSlider.addEventListener('input', updateColor);
+        
+        // 颜色选择器事件
+        customColorPicker.addEventListener('change', (e) => {
+          const hex = e.target.value;
+          const r = parseInt(hex.substr(1, 2), 16);
+          const g = parseInt(hex.substr(3, 2), 16);
+          const b = parseInt(hex.substr(5, 2), 16);
+          
+          redSlider.value = r;
+          greenSlider.value = g;
+          blueSlider.value = b;
+          updateColor();
+        });
+        
+        // 预设颜色按钮事件
+        const resetColorBtn = document.getElementById('resetColorBtn');
+        const warmToneBtn = document.getElementById('warmToneBtn');
+        
+        resetColorBtn.addEventListener('click', () => {
+          redSlider.value = 230;
+          greenSlider.value = 179;
+          blueSlider.value = 153;
+          intensitySlider.value = 80;
+          opacitySlider.value = 70;  // 重置透明度为70%
+          updateColor();
+        });
+        
+        warmToneBtn.addEventListener('click', () => {
+          redSlider.value = 210;
+          greenSlider.value = 150;
+          blueSlider.value = 120;
+          intensitySlider.value = 75;
+          opacitySlider.value = 70;  // 暖色调也设置70%透明度
+          updateColor();
+        });
+        
+        // 初始化显示
+        updateColor();
+      };
+      
+      // 初始化颜色采样Canvas
+      const initColorSampling = () => {
+        colorCanvas = document.createElement('canvas');
+        colorCanvas.width = 64;
+        colorCanvas.height = 64;
+        colorCtx = colorCanvas.getContext('2d');
+      };
+      
+      // 从视频中采样人脸颜色
+      const sampleFaceColor = (video) => {
+        if (!colorCtx) return lastFaceColor;
+        
+        try {
+          colorUpdateCounter++;
+          if (colorUpdateCounter % 10 !== 0) return lastFaceColor;
+          
+          colorCtx.drawImage(video, 0, 0, colorCanvas.width, colorCanvas.height);
+          
+          const centerX = Math.floor(colorCanvas.width * 0.5);
+          const centerY = Math.floor(colorCanvas.height * 0.4);
+          const sampleSize = 20;
+          
+          let r = 0, g = 0, b = 0, count = 0;
+          
+          for (let x = centerX - sampleSize; x < centerX + sampleSize; x++) {
+            for (let y = centerY - sampleSize; y < centerY + sampleSize; y++) {
+              if (x >= 0 && x < colorCanvas.width && y >= 0 && y < colorCanvas.height) {
+                const imageData = colorCtx.getImageData(x, y, 1, 1);
+                const [pr, pg, pb] = imageData.data;
+                
+                if (pr > 30 && pr < 240 && pg > 30 && pg < 240 && pb > 30 && pb < 240) {
+                  r += pr;
+                  g += pg;
+                  b += pb;
+                  count++;
+                }
+              }
+            }
+          }
+          
+          if (count > 0) {
+            r /= count;
+            g /= count;
+            b /= count;
+            
+            const newColor = new THREE.Color(r / 255, g / 255, b / 255);
+            lastFaceColor.lerp(newColor, 0.1);
+          }
+          
+        } catch (error) {
+          console.warn('颜色采样失败:', error);
+        }
+        
+        return lastFaceColor;
+      };
+      
+      // 应用颜色到FaceMesh (Shader材质版本)
+      const applyColorToFaceMesh = (faceMesh, faceColor, intensity, mode) => {
+        if (!faceMesh || !faceMesh.material || !originalMaterial || !faceMesh.material.uniforms) return;
+        
+        let blendedColor = new THREE.Color();
+        
+        if (mode === 'multiply') {
+          blendedColor.copy(faceColor).multiply(originalMaterial.color);
+        } else if (mode === 'overlay') {
+          const base = originalMaterial.color;
+          const overlay = faceColor;
+          blendedColor.setRGB(
+            base.r < 0.5 ? 2 * base.r * overlay.r : 1 - 2 * (1 - base.r) * (1 - overlay.r),
+            base.g < 0.5 ? 2 * base.g * overlay.g : 1 - 2 * (1 - base.g) * (1 - overlay.g),
+            base.b < 0.5 ? 2 * base.b * overlay.b : 1 - 2 * (1 - base.b) * (1 - overlay.b)
+          );
+        } else {
+          blendedColor.copy(originalMaterial.color).lerp(faceColor, intensity);
+        }
+        
+        if (mode !== 'lerp') {
+          blendedColor.lerp(originalMaterial.color, 1 - intensity);
+        }
+        
+        // 🎨 更新Shader材质的颜色uniform
+        faceMesh.material.uniforms.color.value.copy(blendedColor);
+        faceMesh.material.needsUpdate = true;
+      };
+      
+      // 创建控制面板
+      createColorControlPanel();
+      
       const mindarThree = new MindARThree({
-	container: document.querySelector("#container"),
+        container: document.querySelector("#container"),
       });
       const {renderer, scene, camera} = mindarThree;
-      const light = new THREE.HemisphereLight( 0xffffff, 0xbbbbff, 1 );
-      scene.add(light);
+      
+      // 🚫 移除光照 - 改为无光照渲染
+      // const light = new THREE.HemisphereLight( 0xffffff, 0xbbbbff, 1 );
+      // scene.add(light);
+      
       const faceMesh = mindarThree.addFaceMesh();
       const texture = new THREE.TextureLoader().load('../enhanced_texture.png');
-      faceMesh.material.map = texture;
-      faceMesh.material.transparent = true;
-      faceMesh.material.needsUpdate = true;
+      
+      // 🎭 加载透明度遮罩贴图 (眼睛和嘴部透明)
+      const alphaTexture = new THREE.TextureLoader().load('../canonical_face_eyes.png');
+      
+      // 🎨 使用自定义Shader Material来实现反转的透明度遮罩
+      const vertexShader = `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `;
+      
+      const fragmentShader = `
+        uniform sampler2D map;
+        uniform sampler2D alphaMap;
+        uniform float opacity;
+        uniform vec3 color;
+        varying vec2 vUv;
+        
+        void main() {
+          vec4 texColor = texture2D(map, vUv);
+          float alpha = texture2D(alphaMap, vUv).r;
+          
+          // 🎭 反转Alpha通道: 黑色(0)=不透明(1), 白色(1)=透明(0)
+          alpha = 1.0 - alpha;
+          
+          // 结合材质透明度和遮罩透明度
+          alpha = alpha * opacity;
+          
+          gl_FragColor = vec4(texColor.rgb * color, alpha);
+        }
+      `;
+      
+      // 🎨 替换为自定义Shader材质实现透明度遮罩
+      unlitMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+          map: { value: texture },
+          alphaMap: { value: alphaTexture },
+          opacity: { value: materialOpacity },
+          color: { value: new THREE.Color(1, 1, 1) }
+        },
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        transparent: true,
+        depthWrite: false,
+        fog: false
+      });
+      
+      faceMesh.material = unlitMaterial;
+      
+      // 保存原始材质颜色 (Shader材质)
+      originalMaterial = {
+        color: unlitMaterial.uniforms.color.value.clone()
+      };
+      
+      // 🔍 调试信息 - 显示材质类型
+      console.log('🎨 材质类型:', unlitMaterial.type);
+      console.log('🚫 光照模式: 无光照 (ShaderMaterial)');
+      console.log('🔍 透明度模式: 半透明 + 透明度遮罩 (opacity:', materialOpacity + ')');
+      console.log('🎭 透明度遮罩: canonical_face_eyes.png (黑色=不透明, 白色=透明)');
+      console.log('💡 移除的光源: HemisphereLight');
+      
       scene.add(faceMesh);
+      
       const start = async() => {
-	await mindarThree.start();
-	renderer.setAnimationLoop(() => {
-	  renderer.render(scene, camera);
-	});
+        await mindarThree.start();
+        initColorSampling();
+        
+        renderer.setAnimationLoop(() => {
+          // 颜色处理
+          if (useAutoColor) {
+            const faceColor = sampleFaceColor(mindarThree.video);
+            applyColorToFaceMesh(faceMesh, faceColor, colorIntensity, colorMode);
+          } else {
+            applyColorToFaceMesh(faceMesh, customColor, colorIntensity, colorMode);
+          }
+          
+          renderer.render(scene, camera);
+        });
       }
+      
+      // 页面卸载时保存配置
+      window.addEventListener('beforeunload', () => {
+        const config = ColorPaletteManager.getCurrentConfig();
+        ColorPaletteManager.saveConfig(config);
+      });
+      
       start();
     </script>
     <style>
       body {
-	margin: 0;
+        margin: 0;
       }
       #container {
-	width: 100vw;
-	height: 100vh;
-	position: relative;
-	overflow: hidden;
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+        overflow: hidden;
       }
     </style>
   </head>

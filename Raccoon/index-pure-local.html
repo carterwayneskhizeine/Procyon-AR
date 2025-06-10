@@ -72,13 +72,72 @@
 
     // 🎨 自定义贴图开关 - 设置为 true 启用自定义贴图
     const USE_CUSTOM_TEXTURE = true; // 改为 false 可关闭自定义贴图
-    const CUSTOM_TEXTURE_PATH = "../enhanced_texture_blackWhite.png";
+    const CUSTOM_TEXTURE_PATH = "../enhanced_texture.png";  //_blackWhite
     
-    // 🎨 颜色控制设置 - 声明在前面避免初始化错误
-    let customColor = new THREE.Color(0.9, 0.7, 0.6); // 自定义颜色
-    let colorIntensity = 0.8; // 颜色强度
-    let colorMode = 'multiply'; // 颜色混合模式
-    let useAutoColor = true; // 是否使用自动颜色采样
+    // 🎨 共享调色板配置管理
+    const ColorPaletteManager = {
+      // 默认配置
+      defaultConfig: {
+        customColor: { r: 0.9, g: 0.7, b: 0.6 },
+        colorIntensity: 0.8,
+        colorMode: 'multiply',
+        useAutoColor: true,
+        redValue: 230,
+        greenValue: 179,
+        blueValue: 153
+      },
+      
+      // 从localStorage加载配置
+      loadConfig() {
+        try {
+          const savedConfig = localStorage.getItem('raccoon-color-palette');
+          if (savedConfig) {
+            const config = JSON.parse(savedConfig);
+            console.log('✅ 已加载保存的调色板配置');
+            return { ...this.defaultConfig, ...config };
+          }
+        } catch (error) {
+          console.warn('⚠️ 加载调色板配置失败，使用默认配置:', error);
+        }
+        return this.defaultConfig;
+      },
+      
+      // 保存配置到localStorage
+      saveConfig(config) {
+        try {
+          localStorage.setItem('raccoon-color-palette', JSON.stringify(config));
+          console.log('💾 调色板配置已保存');
+        } catch (error) {
+          console.warn('⚠️ 保存调色板配置失败:', error);
+        }
+      },
+      
+      // 获取当前配置
+      getCurrentConfig() {
+        return {
+          customColor: {
+            r: customColor.r,
+            g: customColor.g,
+            b: customColor.b
+          },
+          colorIntensity,
+          colorMode,
+          useAutoColor,
+          redValue: Math.round(customColor.r * 255),
+          greenValue: Math.round(customColor.g * 255),
+          blueValue: Math.round(customColor.b * 255)
+        };
+      }
+    };
+    
+    // 加载保存的配置
+    const savedConfig = ColorPaletteManager.loadConfig();
+    
+    // 🎨 颜色控制设置 - 使用保存的配置初始化
+    let customColor = new THREE.Color(savedConfig.customColor.r, savedConfig.customColor.g, savedConfig.customColor.b);
+    let colorIntensity = savedConfig.colorIntensity;
+    let colorMode = savedConfig.colorMode;
+    let useAutoColor = savedConfig.useAutoColor;
     
     // 初始化GPU检测
     await checkGPUInfo();
@@ -96,7 +155,7 @@
       controlPanel.id = 'color-control-panel';
       controlPanel.innerHTML = `
         <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; z-index: 1001; width: 250px;">
-          <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 颜色控制面板</h3>
+          <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 (Local无光照版)</h3>
           
           <div style="margin-bottom: 10px;">
             <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
@@ -109,35 +168,35 @@
           
           <div style="margin-bottom: 10px;">
             <label style="display: block; margin-bottom: 5px;">
-              <input type="checkbox" id="useAutoColorCheck" checked> 自动肤色采样
+              <input type="checkbox" id="useAutoColorCheck" ${useAutoColor ? 'checked' : ''}> 自动肤色采样
             </label>
           </div>
           
-          <div id="manualColorControls" style="display: none;">
+          <div id="manualColorControls" style="display: ${useAutoColor ? 'none' : 'block'};">
             <div style="margin-bottom: 8px;">
               <label style="display: block; margin-bottom: 3px;">自定义颜色:</label>
-              <input type="color" id="customColorPicker" value="#e6b399" style="width: 100%; height: 30px; border: none; border-radius: 4px;">
+              <input type="color" id="customColorPicker" style="width: 100%; height: 30px; border: none; border-radius: 4px;">
             </div>
           </div>
           
           <div style="margin-bottom: 8px;">
-            <label style="display: block; margin-bottom: 3px;">强度: <span id="intensityValue">80%</span></label>
-            <input type="range" id="intensitySlider" min="0" max="100" value="80" style="width: 100%;">
+            <label style="display: block; margin-bottom: 3px;">强度: <span id="intensityValue">${Math.round(colorIntensity * 100)}%</span></label>
+            <input type="range" id="intensitySlider" min="0" max="100" value="${Math.round(colorIntensity * 100)}" style="width: 100%;">
           </div>
           
           <div style="margin-bottom: 8px;">
-            <label style="display: block; margin-bottom: 3px;">红色: <span id="redValue">144</span></label>
-            <input type="range" id="redSlider" min="0" max="255" value="230" style="width: 100%;">
+            <label style="display: block; margin-bottom: 3px;">红色: <span id="redValue">${savedConfig.redValue}</span></label>
+            <input type="range" id="redSlider" min="0" max="255" value="${savedConfig.redValue}" style="width: 100%;">
           </div>
           
           <div style="margin-bottom: 8px;">
-            <label style="display: block; margin-bottom: 3px;">绿色: <span id="greenValue">179</span></label>
-            <input type="range" id="greenSlider" min="0" max="255" value="179" style="width: 100%;">
+            <label style="display: block; margin-bottom: 3px;">绿色: <span id="greenValue">${savedConfig.greenValue}</span></label>
+            <input type="range" id="greenSlider" min="0" max="255" value="${savedConfig.greenValue}" style="width: 100%;">
           </div>
           
           <div style="margin-bottom: 10px;">
-            <label style="display: block; margin-bottom: 3px;">蓝色: <span id="blueValue">153</span></label>
-            <input type="range" id="blueSlider" min="0" max="255" value="153" style="width: 100%;">
+            <label style="display: block; margin-bottom: 3px;">蓝色: <span id="blueValue">${savedConfig.blueValue}</span></label>
+            <input type="range" id="blueSlider" min="0" max="255" value="${savedConfig.blueValue}" style="width: 100%;">
           </div>
           
           <div style="background: #333; padding: 8px; border-radius: 4px; text-align: center;">
@@ -148,6 +207,11 @@
           <div style="margin-top: 10px; text-align: center;">
             <button id="resetColorBtn" style="background: #555; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-right: 5px;">重置</button>
             <button id="warmToneBtn" style="background: #8B4513; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">暖色调</button>
+          </div>
+          
+          <div style="margin-top: 8px; font-size: 10px; color: #888; text-align: center;">
+            配置自动同步到Tige版本<br/>
+            🚫 无光照材质 | MeshBasicMaterial
           </div>
         </div>
       `;
@@ -168,15 +232,26 @@
       const greenSlider = document.getElementById('greenSlider');
       const blueSlider = document.getElementById('blueSlider');
       
+      // 设置初始值
+      colorModeSelect.value = colorMode;
+      
+      // 自动保存配置的函数
+      const saveCurrentConfig = () => {
+        const config = ColorPaletteManager.getCurrentConfig();
+        ColorPaletteManager.saveConfig(config);
+      };
+      
       // 颜色模式切换
       colorModeSelect.addEventListener('change', (e) => {
         colorMode = e.target.value;
+        saveCurrentConfig();
       });
       
       // 自动/手动颜色切换
       useAutoColorCheck.addEventListener('change', (e) => {
         useAutoColor = e.target.checked;
         manualColorControls.style.display = useAutoColor ? 'none' : 'block';
+        saveCurrentConfig();
       });
       
       // 更新颜色的函数
@@ -201,6 +276,9 @@
         colorPreview.style.background = `rgb(${r}, ${g}, ${b})`;
         colorHex.textContent = hexColor;
         customColorPicker.value = hexColor;
+        
+        // 自动保存配置
+        saveCurrentConfig();
       };
       
       // 绑定滑块事件
@@ -278,8 +356,9 @@
       });
     }
 
-    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    scene.add(light);
+    // 🚫 移除光照 - 改为无光照渲染模式
+    // const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    // scene.add(light);
 
     // 浣熊Avatar类
     class Avatar {
@@ -333,35 +412,59 @@
           
           const mesh = object;
           
-          // 收集材质信息用于颜色转换
+          // 🎨 转换为无光照材质并收集材质信息
           if (mesh.material) {
             if (Array.isArray(mesh.material)) {
               mesh.material.forEach((mat, index) => {
-                // 应用自定义贴图
+                // 🚫 创建无光照材质替换原有材质
+                const unlitMaterial = new THREE.MeshBasicMaterial({
+                  map: USE_CUSTOM_TEXTURE && this.customTexture ? this.customTexture : mat.map,
+                  transparent: mat.transparent || false,
+                  opacity: mat.opacity || 1.0,
+                  color: mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1),
+                  alphaTest: mat.alphaTest || 0,
+                  side: mat.side || THREE.FrontSide,
+                  fog: false,  // 禁用雾化效果
+                  toneMapped: false  // 禁用色调映射
+                });
+                
+                // 替换原材质
+                mesh.material[index] = unlitMaterial;
+                
                 if (USE_CUSTOM_TEXTURE && this.customTexture) {
-                  mat.map = this.customTexture;
-                  mat.needsUpdate = true;
-                  console.log(`✅ 已应用自定义贴图到材质 ${index}`);
+                  console.log(`✅ 已应用自定义贴图到无光照材质 ${index}`);
                 }
                 
-                this.materials.push(mat);
+                this.materials.push(unlitMaterial);
                 this.originalColors.push({
-                  color: mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1),
-                  emissive: mat.emissive ? mat.emissive.clone() : new THREE.Color(0, 0, 0)
+                  color: unlitMaterial.color.clone(),
+                  emissive: new THREE.Color(0, 0, 0)  // 无光照材质无需发光色
                 });
               });
             } else {
-              // 应用自定义贴图
+              // 🚫 创建无光照材质替换原有材质
+              const unlitMaterial = new THREE.MeshBasicMaterial({
+                map: USE_CUSTOM_TEXTURE && this.customTexture ? this.customTexture : mesh.material.map,
+                transparent: mesh.material.transparent || false,
+                opacity: mesh.material.opacity || 1.0,
+                color: mesh.material.color ? mesh.material.color.clone() : new THREE.Color(1, 1, 1),
+                alphaTest: mesh.material.alphaTest || 0,
+                side: mesh.material.side || THREE.FrontSide,
+                fog: false,  // 禁用雾化效果
+                toneMapped: false  // 禁用色调映射
+              });
+              
+              // 替换原材质
+              mesh.material = unlitMaterial;
+              
               if (USE_CUSTOM_TEXTURE && this.customTexture) {
-                mesh.material.map = this.customTexture;
-                mesh.material.needsUpdate = true;
-                console.log('✅ 已应用自定义贴图到主材质');
+                console.log('✅ 已应用自定义贴图到无光照主材质');
               }
               
-              this.materials.push(mesh.material);
+              this.materials.push(unlitMaterial);
               this.originalColors.push({
-                color: mesh.material.color ? mesh.material.color.clone() : new THREE.Color(1, 1, 1),
-                emissive: mesh.material.emissive ? mesh.material.emissive.clone() : new THREE.Color(0, 0, 0)
+                color: unlitMaterial.color.clone(),
+                emissive: new THREE.Color(0, 0, 0)  // 无光照材质无需发光色
               });
             }
           }
@@ -372,6 +475,9 @@
         
         this.gltf = gltf;
         console.log('✅ 浣熊模型加载成功');
+        console.log('🚫 光照模式: 无光照 (MeshBasicMaterial)');
+        console.log('💡 移除的光源: HemisphereLight');
+        console.log(`🎨 转换材质数量: ${this.materials.length}`);
       }
       
       updateBlendshapes(blendshapes) {
@@ -643,6 +749,13 @@
         renderer.render(scene, camera);
       });
     }
+    
+    // 页面卸载时保存配置
+    window.addEventListener('beforeunload', () => {
+      const config = ColorPaletteManager.getCurrentConfig();
+      ColorPaletteManager.saveConfig(config);
+    });
+    
     start();
   </script>
 
