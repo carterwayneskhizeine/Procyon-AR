@@ -29,7 +29,9 @@
               <strong>🦝 浣熊AR - 纯本地源码</strong><br/>
               供应商: ${vendor}<br/>
               渲染器: ${renderer}<br/>
-              <span id="performance-info"></span>
+              <span id="performance-info"></span><br/>
+              <span id="color-info">🎨 肤色采样: 准备中...</span><br/>
+              <span id="texture-info">🖼️ 自定义贴图: 初始化中...</span>
             </div>
           `;
           document.body.appendChild(infoDiv);
@@ -68,9 +70,184 @@
       updateFPS();
     };
 
+    // 🎨 自定义贴图开关 - 设置为 true 启用自定义贴图
+    const USE_CUSTOM_TEXTURE = true; // 改为 false 可关闭自定义贴图
+    const CUSTOM_TEXTURE_PATH = "../enhanced_texture_blackWhite.png";
+    
+    // 🎨 颜色控制设置 - 声明在前面避免初始化错误
+    let customColor = new THREE.Color(0.9, 0.7, 0.6); // 自定义颜色
+    let colorIntensity = 0.8; // 颜色强度
+    let colorMode = 'multiply'; // 颜色混合模式
+    let useAutoColor = true; // 是否使用自动颜色采样
+    
     // 初始化GPU检测
     await checkGPUInfo();
     addPerformanceMonitor();
+    
+    // 更新贴图状态显示
+    const textureInfo = document.getElementById('texture-info');
+    if (textureInfo) {
+      textureInfo.innerHTML = `🖼️ 自定义贴图: ${USE_CUSTOM_TEXTURE ? '启用' : '关闭'}`;
+    }
+    
+    // 创建颜色控制面板
+    const createColorControlPanel = () => {
+      const controlPanel = document.createElement('div');
+      controlPanel.id = 'color-control-panel';
+      controlPanel.innerHTML = `
+        <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; z-index: 1001; width: 250px;">
+          <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 颜色控制面板</h3>
+          
+          <div style="margin-bottom: 10px;">
+            <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
+            <select id="colorModeSelect" style="width: 100%; padding: 3px; background: #333; color: white; border: 1px solid #555;">
+              <option value="multiply">乘法混合 (推荐黑白贴图)</option>
+              <option value="overlay">叠加混合</option>
+              <option value="lerp">线性插值</option>
+            </select>
+          </div>
+          
+          <div style="margin-bottom: 10px;">
+            <label style="display: block; margin-bottom: 5px;">
+              <input type="checkbox" id="useAutoColorCheck" checked> 自动肤色采样
+            </label>
+          </div>
+          
+          <div id="manualColorControls" style="display: none;">
+            <div style="margin-bottom: 8px;">
+              <label style="display: block; margin-bottom: 3px;">自定义颜色:</label>
+              <input type="color" id="customColorPicker" value="#e6b399" style="width: 100%; height: 30px; border: none; border-radius: 4px;">
+            </div>
+          </div>
+          
+          <div style="margin-bottom: 8px;">
+            <label style="display: block; margin-bottom: 3px;">强度: <span id="intensityValue">80%</span></label>
+            <input type="range" id="intensitySlider" min="0" max="100" value="80" style="width: 100%;">
+          </div>
+          
+          <div style="margin-bottom: 8px;">
+            <label style="display: block; margin-bottom: 3px;">红色: <span id="redValue">144</span></label>
+            <input type="range" id="redSlider" min="0" max="255" value="230" style="width: 100%;">
+          </div>
+          
+          <div style="margin-bottom: 8px;">
+            <label style="display: block; margin-bottom: 3px;">绿色: <span id="greenValue">179</span></label>
+            <input type="range" id="greenSlider" min="0" max="255" value="179" style="width: 100%;">
+          </div>
+          
+          <div style="margin-bottom: 10px;">
+            <label style="display: block; margin-bottom: 3px;">蓝色: <span id="blueValue">153</span></label>
+            <input type="range" id="blueSlider" min="0" max="255" value="153" style="width: 100%;">
+          </div>
+          
+          <div style="background: #333; padding: 8px; border-radius: 4px; text-align: center;">
+            <div id="colorPreview" style="width: 100%; height: 20px; border-radius: 3px; background: rgb(230, 179, 153); margin-bottom: 5px;"></div>
+            <span id="colorHex">#e6b399</span>
+          </div>
+          
+          <div style="margin-top: 10px; text-align: center;">
+            <button id="resetColorBtn" style="background: #555; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; margin-right: 5px;">重置</button>
+            <button id="warmToneBtn" style="background: #8B4513; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">暖色调</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(controlPanel);
+      
+      // 绑定事件
+      setupColorControlEvents();
+    };
+    
+    // 设置颜色控制事件
+    const setupColorControlEvents = () => {
+      const colorModeSelect = document.getElementById('colorModeSelect');
+      const useAutoColorCheck = document.getElementById('useAutoColorCheck');
+      const manualColorControls = document.getElementById('manualColorControls');
+      const customColorPicker = document.getElementById('customColorPicker');
+      const intensitySlider = document.getElementById('intensitySlider');
+      const redSlider = document.getElementById('redSlider');
+      const greenSlider = document.getElementById('greenSlider');
+      const blueSlider = document.getElementById('blueSlider');
+      
+      // 颜色模式切换
+      colorModeSelect.addEventListener('change', (e) => {
+        colorMode = e.target.value;
+      });
+      
+      // 自动/手动颜色切换
+      useAutoColorCheck.addEventListener('change', (e) => {
+        useAutoColor = e.target.checked;
+        manualColorControls.style.display = useAutoColor ? 'none' : 'block';
+      });
+      
+      // 更新颜色的函数
+      const updateColor = () => {
+        const r = parseInt(redSlider.value);
+        const g = parseInt(greenSlider.value);
+        const b = parseInt(blueSlider.value);
+        
+        customColor.setRGB(r / 255, g / 255, b / 255);
+        colorIntensity = parseInt(intensitySlider.value) / 100;
+        
+        // 更新显示
+        document.getElementById('redValue').textContent = r;
+        document.getElementById('greenValue').textContent = g;
+        document.getElementById('blueValue').textContent = b;
+        document.getElementById('intensityValue').textContent = Math.round(colorIntensity * 100) + '%';
+        
+        const colorPreview = document.getElementById('colorPreview');
+        const colorHex = document.getElementById('colorHex');
+        const hexColor = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        
+        colorPreview.style.background = `rgb(${r}, ${g}, ${b})`;
+        colorHex.textContent = hexColor;
+        customColorPicker.value = hexColor;
+      };
+      
+      // 绑定滑块事件
+      intensitySlider.addEventListener('input', updateColor);
+      redSlider.addEventListener('input', updateColor);
+      greenSlider.addEventListener('input', updateColor);
+      blueSlider.addEventListener('input', updateColor);
+      
+      // 颜色选择器事件
+      customColorPicker.addEventListener('change', (e) => {
+        const hex = e.target.value;
+        const r = parseInt(hex.substr(1, 2), 16);
+        const g = parseInt(hex.substr(3, 2), 16);
+        const b = parseInt(hex.substr(5, 2), 16);
+        
+        redSlider.value = r;
+        greenSlider.value = g;
+        blueSlider.value = b;
+        updateColor();
+      });
+      
+      // 预设颜色按钮事件
+      const resetColorBtn = document.getElementById('resetColorBtn');
+      const warmToneBtn = document.getElementById('warmToneBtn');
+      
+      resetColorBtn.addEventListener('click', () => {
+        redSlider.value = 230;
+        greenSlider.value = 179;
+        blueSlider.value = 153;
+        intensitySlider.value = 80;
+        updateColor();
+      });
+      
+      warmToneBtn.addEventListener('click', () => {
+        redSlider.value = 210;
+        greenSlider.value = 150;
+        blueSlider.value = 120;
+        intensitySlider.value = 75;
+        updateColor();
+      });
+      
+      // 初始化显示
+      updateColor();
+    };
+    
+    // 创建控制面板
+    createColorControlPanel();
 
     const mindarThree = new MindARThree({
       container: document.querySelector("#container"),
@@ -109,12 +286,40 @@
       constructor() {
         this.gltf = null;
         this.morphTargetMeshes = [];
+        this.materials = []; // 存储模型材质
+        this.originalColors = []; // 存储原始材质颜色
+        this.customTexture = null; // 自定义贴图
       }
       
       async init() {
         console.log('🦝 开始加载浣熊模型...');
         const url = "./assets/raccoon_head.glb";
         const loader = new GLTFLoader();
+        
+        // 如果启用自定义贴图，先加载贴图
+        if (USE_CUSTOM_TEXTURE) {
+          console.log('🎨 加载自定义贴图...');
+          const textureLoader = new THREE.TextureLoader();
+          try {
+            this.customTexture = await new Promise((resolve, reject) => {
+              textureLoader.load(
+                CUSTOM_TEXTURE_PATH,
+                (texture) => {
+                  texture.flipY = false; // GLB模型通常需要这个设置
+                  texture.wrapS = THREE.RepeatWrapping;
+                  texture.wrapT = THREE.RepeatWrapping;
+                  console.log('✅ 自定义贴图加载成功');
+                  resolve(texture);
+                },
+                undefined,
+                reject
+              );
+            });
+          } catch (error) {
+            console.warn('⚠️ 自定义贴图加载失败，使用原始贴图:', error);
+            this.customTexture = null;
+          }
+        }
         
         const gltf = await new Promise((resolve, reject) => {
           loader.load(url, resolve, undefined, reject);
@@ -127,6 +332,40 @@
           if (!object.isMesh) return;
           
           const mesh = object;
+          
+          // 收集材质信息用于颜色转换
+          if (mesh.material) {
+            if (Array.isArray(mesh.material)) {
+              mesh.material.forEach((mat, index) => {
+                // 应用自定义贴图
+                if (USE_CUSTOM_TEXTURE && this.customTexture) {
+                  mat.map = this.customTexture;
+                  mat.needsUpdate = true;
+                  console.log(`✅ 已应用自定义贴图到材质 ${index}`);
+                }
+                
+                this.materials.push(mat);
+                this.originalColors.push({
+                  color: mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1),
+                  emissive: mat.emissive ? mat.emissive.clone() : new THREE.Color(0, 0, 0)
+                });
+              });
+            } else {
+              // 应用自定义贴图
+              if (USE_CUSTOM_TEXTURE && this.customTexture) {
+                mesh.material.map = this.customTexture;
+                mesh.material.needsUpdate = true;
+                console.log('✅ 已应用自定义贴图到主材质');
+              }
+              
+              this.materials.push(mesh.material);
+              this.originalColors.push({
+                color: mesh.material.color ? mesh.material.color.clone() : new THREE.Color(1, 1, 1),
+                emissive: mesh.material.emissive ? mesh.material.emissive.clone() : new THREE.Color(0, 0, 0)
+              });
+            }
+          }
+          
           if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
           this.morphTargetMeshes.push(mesh);
         });
@@ -157,6 +396,45 @@
           }
         }
       }
+      
+      // 实时颜色转换功能 - 类似DeepFaceLab LTC
+      updateSkinColor(faceColor, intensity = 0.7, colorMode = 'multiply') {
+        if (!faceColor || this.materials.length === 0) return;
+        
+        for (let i = 0; i < this.materials.length; i++) {
+          const material = this.materials[i];
+          const originalColor = this.originalColors[i];
+          
+          if (material.color && originalColor.color) {
+            let blendedColor = new THREE.Color();
+            
+            if (colorMode === 'multiply') {
+              // 对于黑白贴图，使用乘法混合更自然
+              blendedColor.copy(faceColor).multiply(originalColor.color);
+            } else if (colorMode === 'overlay') {
+              // 叠加模式，保持贴图细节
+              const base = originalColor.color;
+              const overlay = faceColor;
+              blendedColor.setRGB(
+                base.r < 0.5 ? 2 * base.r * overlay.r : 1 - 2 * (1 - base.r) * (1 - overlay.r),
+                base.g < 0.5 ? 2 * base.g * overlay.g : 1 - 2 * (1 - base.g) * (1 - overlay.g),
+                base.b < 0.5 ? 2 * base.b * overlay.b : 1 - 2 * (1 - base.b) * (1 - overlay.b)
+              );
+            } else {
+              // 线性插值模式
+              blendedColor.copy(originalColor.color).lerp(faceColor, intensity);
+            }
+            
+            // 应用强度
+            if (colorMode !== 'lerp') {
+              blendedColor.lerp(originalColor.color, 1 - intensity);
+            }
+            
+            material.color.copy(blendedColor);
+            material.needsUpdate = true;
+          }
+        }
+      }
     }
 
     // 创建浣熊Avatar
@@ -177,10 +455,85 @@
     let lastPosition = { x: 0, y: 0, z: 0 };
     let lastRotation = { x: 0, y: 0, z: 0 };
     const smoothingFactor = 0.95; // 平滑系数，值越小越平滑但响应越慢
+    
+    // 颜色采样相关变量
+    let colorCanvas = null;
+    let colorCtx = null;
+    let lastFaceColor = new THREE.Color(0.8, 0.6, 0.5); // 默认肤色
+    let colorUpdateCounter = 0;
+    
+    // 🎨 颜色控制设置已在前面声明
+    
+    // 初始化颜色采样Canvas
+    const initColorSampling = () => {
+      colorCanvas = document.createElement('canvas');
+      colorCanvas.width = 64; // 小尺寸提高性能
+      colorCanvas.height = 64;
+      colorCtx = colorCanvas.getContext('2d');
+    };
+    
+    // 从视频中采样人脸颜色
+    const sampleFaceColor = (video, estimate) => {
+      if (!colorCtx || !estimate || !estimate.metricLandmarks) return lastFaceColor;
+      
+      try {
+        // 只每10帧更新一次颜色，提高性能
+        colorUpdateCounter++;
+        if (colorUpdateCounter % 10 !== 0) return lastFaceColor;
+        
+        // 绘制视频帧到小画布
+        colorCtx.drawImage(video, 0, 0, colorCanvas.width, colorCanvas.height);
+        
+        // 采样面部中心区域的颜色
+        const centerX = Math.floor(colorCanvas.width * 0.5);
+        const centerY = Math.floor(colorCanvas.height * 0.4); // 稍微偏上，避开嘴部
+        const sampleSize = 120; // 采样区域大小
+        
+        let r = 0, g = 0, b = 0, count = 0;
+        
+        // 采样中心区域的像素
+        for (let x = centerX - sampleSize; x < centerX + sampleSize; x++) {
+          for (let y = centerY - sampleSize; y < centerY + sampleSize; y++) {
+            if (x >= 0 && x < colorCanvas.width && y >= 0 && y < colorCanvas.height) {
+              const imageData = colorCtx.getImageData(x, y, 1, 1);
+              const [pr, pg, pb] = imageData.data;
+              
+              // 排除过暗或过亮的像素
+              if (pr > 30 && pr < 240 && pg > 30 && pg < 240 && pb > 30 && pb < 240) {
+                r += pr;
+                g += pg;
+                b += pb;
+                count++;
+              }
+            }
+          }
+        }
+        
+        if (count > 0) {
+          r /= count;
+          g /= count;
+          b /= count;
+          
+          // 转换为Three.js颜色格式
+          const newColor = new THREE.Color(r / 255, g / 255, b / 255);
+          
+          // 平滑颜色变化
+          lastFaceColor.lerp(newColor, 0.1);
+        }
+        
+      } catch (error) {
+        console.warn('颜色采样失败:', error);
+      }
+      
+      return lastFaceColor;
+    };
 
     const start = async () => {
       console.log('🚀 启动 浣熊面部跟踪（纯本地源码）...');
       await mindarThree.start();
+      
+      // 初始化颜色采样系统
+      initColorSampling();
       
       // 添加视频流到右下角
       const feedVideo = document.createElement('video');
@@ -249,6 +602,22 @@
         const estimate = mindarThree.getLatestEstimate();
         if (estimate && estimate.blendshapes) {
           avatar.updateBlendshapes(estimate.blendshapes);
+          
+          // 🎨 实时颜色转换 - 类似DeepFaceLab LTC
+          const faceColor = sampleFaceColor(mindarThree.video, estimate);
+          
+          // 根据设置选择使用自动采样或手动颜色
+          const finalColor = useAutoColor ? faceColor : customColor;
+          avatar.updateSkinColor(finalColor, colorIntensity, colorMode);
+          
+          // 更新颜色信息显示
+          const colorInfo = document.getElementById('color-info');
+          if (colorInfo && colorUpdateCounter % 30 === 0) { // 每30帧更新一次显示
+            const displayColor = useAutoColor ? faceColor : customColor;
+            const rgb = `rgb(${Math.round(displayColor.r * 255)}, ${Math.round(displayColor.g * 255)}, ${Math.round(displayColor.b * 255)})`;
+            const colorType = useAutoColor ? '自动采样' : '手动设置';
+            colorInfo.innerHTML = `🎨 肤色 (${colorType}): <span style="color: ${rgb};">●</span> ${rgb}`;
+          }
         }
         
         // 添加额外的位置平滑处理

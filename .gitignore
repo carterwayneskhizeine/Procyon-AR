@@ -6,3 +6,4 @@ dist/
 *.DS_Store
 canonical_face_model_uv_visualization.png
 enhanced_texture.png
+enhanced_texture_blackWhite.png
