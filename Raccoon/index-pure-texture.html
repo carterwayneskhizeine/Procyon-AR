@@ -101,7 +101,7 @@
         controlPanel.id = 'color-control-panel';
         controlPanel.innerHTML = `
           <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; z-index: 1001; width: 250px;">
-            <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 (Tige半透明版)</h3>
+            <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 (Texture半透明版)</h3>
             
             <div style="margin-bottom: 10px;">
               <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
@@ -160,11 +160,11 @@
               <button id="warmToneBtn" style="background: #8B4513; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">暖色调</button>
             </div>
             
-            <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
-              配置自动同步到Local版本<br/>
-              🎭 透明度遮罩 + 半透明 | ShaderMaterial<br/>
-              眼睛和嘴部完全透明
-            </div>
+                          <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
+                配置自动同步到Mesh版本<br/>
+                🎭 透明度遮罩 + 半透明 | ShaderMaterial<br/>
+                眼睛和嘴部完全透明
+              </div>
             
             <div id="trackingStatus" style="margin-top: 8px; padding: 5px; background: #222; border-radius: 3px; text-align: center; font-size: 10px;">
               <div style="color: #FFD700;">👁️ clmtrackr 人脸跟踪</div>
@@ -295,8 +295,8 @@
         
         // 👁️ 添加测试按钮
         const testBtn = document.createElement('button');
-        testBtn.textContent = '🧪 测试保存';
-        testBtn.style.cssText = 'position: fixed; top: 350px; right: 10px; background: #ff6b6b; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; z-index: 1002;';
+        testBtn.textContent = '🧪 测试保存(Texture)';
+        testBtn.style.cssText = 'position: fixed; top: 350px; left: 10px; background: #ff6b6b; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; z-index: 1002;';
         testBtn.onclick = () => {
           // 测试保存功能
           const testData = {
@@ -323,12 +323,12 @@
           })
           .then(response => response.json())
           .then(result => {
-            console.log('🧪 测试保存结果:', result);
-            alert('测试保存成功！检查 swap_point 文件夹');
+            console.log('🧪 Texture版测试保存结果:', result);
+            alert('Texture版测试保存成功！检查 swap_point/face_landmarks_texture.json');
           })
           .catch(error => {
-            console.error('🧪 测试保存失败:', error);
-            alert('测试保存失败：' + error.message);
+            console.error('🧪 Texture版测试保存失败:', error);
+            alert('Texture版测试保存失败：' + error.message);
           });
         };
         document.body.appendChild(testBtn);

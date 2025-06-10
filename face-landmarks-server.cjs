@@ -21,11 +21,11 @@ const ensureSwapPointDir = async () => {
   }
 };
 
-// API端点：保存人脸特征点
+// API端点：保存人脸特征点 (Texture版本)
 app.post('/api/save-landmarks', async (req, res) => {
   try {
     const landmarkData = req.body;
-    const filePath = path.join(__dirname, 'swap_point', 'face_landmarks.json');
+    const filePath = path.join(__dirname, 'swap_point', 'face_landmarks_texture.json');
     
     // 添加服务器端时间戳
     landmarkData.serverTimestamp = Date.now();
@@ -34,17 +34,17 @@ app.post('/api/save-landmarks', async (req, res) => {
     // 保存到文件
     await fs.writeFile(filePath, JSON.stringify(landmarkData, null, 2));
     
-    console.log(`💾 人脸特征点已保存 - 特征点数量: ${landmarkData.landmarks?.length || 0}`);
+    console.log(`💾 Texture版人脸特征点已保存 - 特征点数量: ${landmarkData.landmarks?.length || 0}`);
     
     res.json({ 
       success: true, 
-      message: '人脸特征点保存成功',
+      message: 'Texture版人脸特征点保存成功',
       pointCount: landmarkData.landmarks?.length || 0,
       timestamp: landmarkData.serverTimestamp
     });
     
   } catch (error) {
-    console.error('❌ 保存人脸特征点失败:', error);
+    console.error('❌ 保存Texture版人脸特征点失败:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -52,23 +52,77 @@ app.post('/api/save-landmarks', async (req, res) => {
   }
 });
 
-// API端点：获取最新的人脸特征点
+// API端点：保存人脸特征点 (Mesh版本)
+app.post('/api/save-landmarks-local', async (req, res) => {
+  try {
+    const landmarkData = req.body;
+    const filePath = path.join(__dirname, 'swap_point', 'face_landmarks_mesh.json');
+    
+    // 添加服务器端时间戳
+    landmarkData.serverTimestamp = Date.now();
+    landmarkData.saveTime = new Date().toISOString();
+    
+    // 保存到文件
+    await fs.writeFile(filePath, JSON.stringify(landmarkData, null, 2));
+    
+    console.log(`💾 Mesh版人脸特征点已保存 - 特征点数量: ${landmarkData.landmarks?.length || 0}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Mesh版人脸特征点保存成功',
+      pointCount: landmarkData.landmarks?.length || 0,
+      timestamp: landmarkData.serverTimestamp
+    });
+    
+  } catch (error) {
+    console.error('❌ 保存Mesh版人脸特征点失败:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// API端点：获取最新的人脸特征点 (Texture版本)
 app.get('/api/get-landmarks', async (req, res) => {
   try {
-    const filePath = path.join(__dirname, 'swap_point', 'face_landmarks.json');
+    const filePath = path.join(__dirname, 'swap_point', 'face_landmarks_texture.json');
     const data = await fs.readFile(filePath, 'utf8');
     const landmarkData = JSON.parse(data);
     
     res.json({
       success: true,
-      data: landmarkData
+      data: landmarkData,
+      source: 'texture'
     });
     
   } catch (error) {
-    console.warn('⚠️ 读取人脸特征点失败:', error.message);
+    console.warn('⚠️ 读取Texture版人脸特征点失败:', error.message);
     res.status(404).json({
       success: false,
-      error: '未找到人脸特征点数据'
+      error: '未找到Texture版人脸特征点数据'
+    });
+  }
+});
+
+// API端点：获取最新的人脸特征点 (Mesh版本)
+app.get('/api/get-landmarks-local', async (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'swap_point', 'face_landmarks_mesh.json');
+    const data = await fs.readFile(filePath, 'utf8');
+    const landmarkData = JSON.parse(data);
+    
+    res.json({
+      success: true,
+      data: landmarkData,
+      source: 'mesh'
+    });
+    
+  } catch (error) {
+    console.warn('⚠️ 读取Mesh版人脸特征点失败:', error.message);
+    res.status(404).json({
+      success: false,
+      error: '未找到Mesh版人脸特征点数据'
     });
   }
 });
@@ -91,9 +145,11 @@ const startServer = async () => {
     console.log(`📡 服务地址: http://localhost:${PORT}`);
     console.log(`💾 保存目录: ${path.join(__dirname, 'swap_point')}`);
     console.log(`📊 API端点:`);
-    console.log(`   POST /api/save-landmarks - 保存特征点`);
-    console.log(`   GET  /api/get-landmarks  - 获取特征点`);
-    console.log(`   GET  /api/health         - 健康检查`);
+    console.log(`   POST /api/save-landmarks       - 保存特征点 (Texture版)`);
+    console.log(`   POST /api/save-landmarks-local - 保存特征点 (Mesh版)`);
+    console.log(`   GET  /api/get-landmarks        - 获取特征点 (Texture版)`);
+    console.log(`   GET  /api/get-landmarks-local  - 获取特征点 (Mesh版)`);
+    console.log(`   GET  /api/health               - 健康检查`);
   });
 };
 
