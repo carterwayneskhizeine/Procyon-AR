@@ -74,6 +74,9 @@
 
     const mindarThree = new MindARThree({
       container: document.querySelector("#container"),
+      // 添加滤波参数来减少抖动
+      filterMinCF: 0.0001,  // 降低最小截止频率，增加平滑度
+      filterBeta: 0.95,      // 降低beta值，减少响应速度但增加稳定性
     });
     const { renderer, scene, camera } = mindarThree;
 
@@ -162,8 +165,18 @@
 
     // 创建锚点并添加浣熊
     const anchor = mindarThree.addAnchor(1);
-    avatar.gltf.scene.scale.set(2, 2, 2);
+    
+    // 调整浣熊模型的缩放、位置和旋转
+    avatar.gltf.scene.scale.set(2.0, 2.0, 2.0);  //
+    avatar.gltf.scene.position.set(-0, -0.05, -0.5);     // 向后移动2个单位，贴近脸部
+
+    
     anchor.group.add(avatar.gltf.scene);
+    
+    // 添加额外的平滑处理变量
+    let lastPosition = { x: 0, y: 0, z: 0 };
+    let lastRotation = { x: 0, y: 0, z: 0 };
+    const smoothingFactor = 0.95; // 平滑系数，值越小越平滑但响应越慢
 
     const start = async () => {
       console.log('🚀 启动 浣熊面部跟踪（纯本地源码）...');
@@ -236,6 +249,26 @@
         const estimate = mindarThree.getLatestEstimate();
         if (estimate && estimate.blendshapes) {
           avatar.updateBlendshapes(estimate.blendshapes);
+        }
+        
+        // 添加额外的位置平滑处理
+        if (anchor.group.visible) {
+          const currentMatrix = anchor.group.matrix.elements;
+          const currentPosition = {
+            x: currentMatrix[12],
+            y: currentMatrix[13], 
+            z: currentMatrix[14]
+          };
+          
+          // 线性插值平滑位置
+          lastPosition.x += (currentPosition.x - lastPosition.x) * smoothingFactor;
+          lastPosition.y += (currentPosition.y - lastPosition.y) * smoothingFactor;
+          lastPosition.z += (currentPosition.z - lastPosition.z) * smoothingFactor;
+          
+          // 应用平滑后的位置（仅对位移部分进行平滑）
+          anchor.group.matrix.elements[12] = lastPosition.x;
+          anchor.group.matrix.elements[13] = lastPosition.y;
+          anchor.group.matrix.elements[14] = lastPosition.z;
         }
         
         renderer.render(scene, camera);
