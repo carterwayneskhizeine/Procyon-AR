@@ -176,16 +176,60 @@
         position: fixed;
         bottom: 0;
         left: 0;
-        width: 50vw;
+        width: 25vw;
         z-index: 9999999;
         transform: scaleX(-1);
-        border: 2px solid #00ff00;
+        border: 2px solid #FFD700;
         border-radius: 8px;
       `;
       document.body.appendChild(feedVideo);
       
       feedVideo.srcObject = mindarThree.video.srcObject.clone();
       feedVideo.play();
+      
+      // 添加切换按钮
+      const toggleButton = document.createElement('button');
+      toggleButton.id = 'toggle-video';
+      toggleButton.innerHTML = '隐藏视频';
+      toggleButton.style.cssText = `
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        padding: 10px 20px;
+        background: rgba(255, 215, 0, 0.8);
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        z-index: 10000000;
+        transition: background 0.3s;
+      `;
+      
+      // 鼠标悬停效果
+      toggleButton.addEventListener('mouseenter', () => {
+        toggleButton.style.background = 'rgba(255, 215, 0, 1)';
+      });
+      
+      toggleButton.addEventListener('mouseleave', () => {
+        toggleButton.style.background = 'rgba(255, 215, 0, 0.8)';
+      });
+      
+      // 切换显示/隐藏功能
+      let videoVisible = true;
+      toggleButton.addEventListener('click', () => {
+        if (videoVisible) {
+          feedVideo.style.display = 'none';
+          toggleButton.innerHTML = '显示视频';
+        } else {
+          feedVideo.style.display = 'block';
+          toggleButton.innerHTML = '隐藏视频';
+        }
+        videoVisible = !videoVisible;
+      });
+      
+      document.body.appendChild(toggleButton);
       
       renderer.setAnimationLoop(() => {
         // 更新浣熊表情
