@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>面部识别测试页面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        .test-link {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 5px;
+        }
+        .test-link:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 面部识别集成测试</h1>
+        
+        <div class="info">
+            <h3>✅ 已完成的集成功能：</h3>
+            <ul>
+                <li><strong>clmtrackr 面部识别库</strong> - 标准面部关键点检测</li>
+                <li><strong>实时面部点位绘制</strong> - 使用 clmtrackr 内置绘制方法</li>
+                <li><strong>统计信息显示</strong> - FPS 和性能监控</li>
+                <li><strong>自适应画布尺寸</strong> - 根据视频尺寸自动调整</li>
+                <li><strong>状态监控面板</strong> - 实时显示识别状态</li>
+            </ul>
+        </div>
+        
+        <div class="success">
+            <h3>🎨 集成的核心功能：</h3>
+            <ul>
+                <li><strong>MindAR 面部网格</strong> + <strong>clmtrackr 点位检测</strong></li>
+                <li><strong>Three.js 3D渲染</strong> + <strong>2D Canvas 点位绘制</strong></li>
+                <li><strong>实时颜色调色板</strong> + <strong>面部识别可视化</strong></li>
+                <li><strong>透明度遮罩材质</strong> + <strong>标准面部轮廓绘制</strong></li>
+            </ul>
+        </div>
+        
+        <h3>🚀 测试链接：</h3>
+        <a href="Raccoon/index-pure-texture.html" class="test-link" target="_blank">
+            🎯 启动面部识别 + 3D网格
+        </a>
+        <a href="clmtrackr/examples/clm_video.html" class="test-link" target="_blank">
+            📹 原始 clmtrackr 示例
+        </a>
+        
+        <div class="info">
+            <h3>📋 使用说明：</h3>
+            <ol>
+                <li><strong>允许摄像头权限</strong> - 浏览器会请求摄像头访问权限</li>
+                <li><strong>等待初始化</strong> - 面部识别系统需要几秒钟初始化</li>
+                <li><strong>面向摄像头</strong> - 确保面部清晰可见</li>
+                <li><strong>观察效果</strong> - clmtrackr 标准面部轮廓和点位</li>
+                <li><strong>调整参数</strong> - 使用右侧控制面板调整颜色和透明度</li>
+            </ol>
+        </div>
+        
+        <div class="success">
+            <h3>🎯 修复的问题：</h3>
+            <ul>
+                <li><strong>✅ 画布尺寸问题</strong> - 修复了面部点位显示在错误位置的问题</li>
+                <li><strong>✅ 绘制方法优化</strong> - 使用 clmtrackr 内置的标准绘制方法</li>
+                <li><strong>✅ 坐标同步</strong> - 确保面部点位与实际人脸位置对齐</li>
+                <li><strong>✅ 性能优化</strong> - 移除了复杂的手动轮廓绘制逻辑</li>
+                <li><strong>✅ 兼容性提升</strong> - 与原始 clm_video.html 示例保持一致</li>
+            </ul>
+            <div style="margin-top: 10px; padding: 8px; background: #e8f5e8; border-radius: 4px;">
+                <strong>🎯 现在使用与 clm_video.html 相同的绘制方法：</strong><br/>
+                <code>ctrack.draw(facePointsCanvas)</code>
+            </div>
+        </div>
+        
+        <div class="error">
+            <h3>⚠️ 注意事项：</h3>
+            <ul>
+                <li>需要在 <strong>HTTPS</strong> 或 <strong>localhost</strong> 环境下运行</li>
+                <li>确保浏览器支持 <strong>WebRTC</strong> 和 <strong>WebGL</strong></li>
+                <li>建议使用 <strong>Chrome</strong> 浏览器获得最佳性能</li>
+                <li>面部识别需要良好的光照条件</li>
+            </ul>
+        </div>
+        
+        <div class="info">
+            <h3>🔧 技术架构：</h3>
+            <pre style="background: #f8f9fa; padding: 10px; border-radius: 5px; overflow-x: auto;">
+HTML页面
+├── clmtrackr.js (面部识别核心)
+├── utils.js (工具函数)
+├── Stats.js (性能监控)
+├── Three.js (3D渲染)
+├── MindAR (AR框架)
+└── 自定义集成代码
+    ├── 面部点位绘制
+    ├── 轮廓线绘制
+    ├── 状态监控
+    ├── 画布自适应
+    └── 实时更新循环
+            </pre>
+        </div>
+    </div>
+    
+    <script>
+        // 检查必要的API支持
+        window.addEventListener('load', () => {
+            const checks = [
+                { name: 'getUserMedia', supported: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) },
+                { name: 'WebGL', supported: !!window.WebGLRenderingContext },
+                { name: 'Canvas', supported: !!document.createElement('canvas').getContext },
+                { name: 'requestAnimationFrame', supported: !!window.requestAnimationFrame }
+            ];
+            
+            console.log('🔍 API支持检查:');
+            checks.forEach(check => {
+                console.log(`${check.supported ? '✅' : '❌'} ${check.name}: ${check.supported ? '支持' : '不支持'}`);
+            });
+            
+            const allSupported = checks.every(check => check.supported);
+            if (allSupported) {
+                console.log('🎉 所有必要的API都支持，可以正常运行面部识别功能！');
+            } else {
+                console.warn('⚠️ 部分API不支持，可能影响功能正常运行');
+            }
+        });
+    </script>
+</body>
+</html> 

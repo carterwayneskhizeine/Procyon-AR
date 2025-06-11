@@ -1,9 +1,22 @@
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 🎯 添加 clmtrackr 相关脚本 -->
+    <script src="../clmtrackr/examples/js/libs/utils.js"></script>
+    <script src="../clmtrackr/build/clmtrackr.js"></script>
+    <script src="../clmtrackr/examples/js/libs/Stats.js"></script>
+    
     <script type="module">
       import * as THREE from 'three';
       import { MindARThree } from '../src/face-target/three.js';
+      
+      // 🎯 面部识别相关变量
+      let ctrack = null;
+      let trackingStarted = false;
+      let facePoints = [];
+      let facePointsCanvas = null;
+      let facePointsCtx = null;
+      let stats = null;
       
       // 🎨 共享调色板配置管理
       const ColorPaletteManager = {
@@ -89,13 +102,162 @@
       let websocketServer = null;
       let isCompositeEnabled = true;
       
+             // 🎯 初始化面部识别系统
+       const initFaceTracking = () => {
+         console.log('🎯 初始化面部识别系统...');
+         
+         // 初始化 clmtrackr
+         if (typeof clm !== 'undefined') {
+           ctrack = new clm.tracker();
+           ctrack.init();
+           console.log('✅ clmtrackr 初始化成功');
+         } else {
+           console.error('❌ clmtrackr 库未加载');
+           return false;
+         }
+         
+         // 创建面部点位绘制画布 - 等待视频加载后再设置尺寸
+         facePointsCanvas = document.createElement('canvas');
+         facePointsCanvas.id = 'face-points-overlay';
+         facePointsCanvas.style.position = 'absolute';
+         facePointsCanvas.style.top = '0px';
+         facePointsCanvas.style.left = '0px';
+         facePointsCanvas.style.pointerEvents = 'none';
+         facePointsCanvas.style.zIndex = '1000';
+         facePointsCtx = facePointsCanvas.getContext('2d');
+         
+         // 添加到容器
+         const container = document.querySelector('#container');
+         if (container) {
+           container.appendChild(facePointsCanvas);
+         }
+         
+         // 初始化统计信息
+         if (typeof Stats !== 'undefined') {
+           stats = new Stats();
+           stats.domElement.style.position = 'absolute';
+           stats.domElement.style.top = '0px';
+           stats.domElement.style.right = '280px'; // 避免与控制面板重叠
+           stats.domElement.style.zIndex = '1002';
+           container.appendChild(stats.domElement);
+           
+           // 监听 clmtrackr 迭代事件
+           document.addEventListener('clmtrackrIteration', function(event) {
+             stats.update();
+           }, false);
+         }
+         
+         return true;
+       };
+      
+      // 🎯 开始面部跟踪
+      const startFaceTracking = (videoElement) => {
+        if (!ctrack || !videoElement) {
+          console.warn('⚠️ 面部跟踪初始化失败');
+          return false;
+        }
+        
+        try {
+          ctrack.start(videoElement);
+          trackingStarted = true;
+          console.log('✅ 面部跟踪已启动');
+          return true;
+        } catch (error) {
+          console.error('❌ 启动面部跟踪失败:', error);
+          return false;
+        }
+      };
+      
+             // 🎯 绘制面部点位（带缩放和偏移）
+       const drawFacePoints = () => {
+         if (!facePointsCtx || !ctrack) return;
+         
+         // 清空画布
+         facePointsCtx.clearRect(0, 0, facePointsCanvas.width, facePointsCanvas.height);
+         
+         // 检查是否有面部位置数据
+         if (ctrack.getCurrentPosition()) {
+           // 保存当前上下文状态
+           facePointsCtx.save();
+           
+           // 🎯 应用变换：偏移 + 缩放 + 水平翻转
+           facePointsCtx.translate(videoOffsetX, videoOffsetY);
+           facePointsCtx.scale(videoScaleX, videoScaleY);
+           facePointsCtx.scale(-1, 1); // 水平翻转匹配视频
+           facePointsCtx.translate(-facePointsCanvas.width / videoScaleX, 0);
+           
+           // 使用 clmtrackr 内置的绘制方法（在变换后的坐标系中）
+           ctrack.draw(facePointsCanvas);
+           
+           // 恢复上下文状态
+           facePointsCtx.restore();
+         }
+       };
+      
+      
+      
+             // 🎯 调整面部点位画布尺寸和缩放比例
+       let videoScaleX = 1;
+       let videoScaleY = 1;
+       let videoOffsetX = 0;
+       let videoOffsetY = 0;
+       
+       const adjustFacePointsCanvas = (videoElement) => {
+         if (!facePointsCanvas || !videoElement) return;
+         
+         const container = document.querySelector('#container');
+         
+         if (container && videoElement.videoWidth && videoElement.videoHeight) {
+           // 设置画布尺寸与容器一致
+           facePointsCanvas.width = container.clientWidth;
+           facePointsCanvas.height = container.clientHeight;
+           facePointsCanvas.style.width = container.clientWidth + 'px';
+           facePointsCanvas.style.height = container.clientHeight + 'px';
+           
+           // 🎯 计算视频缩放比例（仿照 MindAR 的缩放逻辑）
+           const videoRatio = videoElement.videoWidth / videoElement.videoHeight;
+           const containerRatio = container.clientWidth / container.clientHeight;
+           
+           let displayWidth, displayHeight;
+           if (videoRatio > containerRatio) {
+             displayHeight = container.clientHeight;
+             displayWidth = displayHeight * videoRatio;
+           } else {
+             displayWidth = container.clientWidth;
+             displayHeight = displayWidth / videoRatio;
+           }
+           
+           // 计算缩放比例和偏移量
+           videoScaleX = displayWidth / videoElement.videoWidth;
+           videoScaleY = displayHeight / videoElement.videoHeight;
+           videoOffsetX = (container.clientWidth - displayWidth) / 2;
+           videoOffsetY = (container.clientHeight - displayHeight) / 2;
+           
+           console.log('🎯 画布尺寸和缩放比例调整:', {
+             canvasSize: `${facePointsCanvas.width}x${facePointsCanvas.height}`,
+             videoOriginalSize: `${videoElement.videoWidth}x${videoElement.videoHeight}`,
+             videoDisplaySize: `${displayWidth}x${displayHeight}`,
+             scaleX: videoScaleX,
+             scaleY: videoScaleY,
+             offsetX: videoOffsetX,
+             offsetY: videoOffsetY
+           });
+         }
+       };
+      
       // 创建颜色控制面板
       const createColorControlPanel = () => {
         const controlPanel = document.createElement('div');
         controlPanel.id = 'color-control-panel';
         controlPanel.innerHTML = `
           <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; z-index: 1001; width: 250px;">
-            <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 (Texture半透明版)</h3>
+            <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 + 🎯 面部识别</h3>
+            
+                         <div style="margin-bottom: 10px; padding: 8px; background: #333; border-radius: 4px;">
+               <div style="color: #00FF00; font-weight: bold; margin-bottom: 5px;">🎯 面部识别状态</div>
+               <div id="faceTrackingStatus" style="color: #888;">初始化中...</div>
+               <div style="font-size: 10px; color: #666; margin-top: 3px;">clmtrackr 标准面部跟踪</div>
+             </div>
             
             <div style="margin-bottom: 10px;">
               <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
@@ -157,7 +319,7 @@
             <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
               配置自动同步到Mesh版本<br/>
               🎭 透明度遮罩 + 半透明 | ShaderMaterial<br/>
-              眼睛和嘴部完全透明
+              🎯 clmtrackr 标准绘制 + 面部轮廓
             </div>
           </div>
         `;
@@ -279,6 +441,14 @@
         
         // 初始化显示
         updateColor();
+      };
+      
+      // 🎯 更新面部识别状态显示
+      const updateFaceTrackingStatus = (status) => {
+        const statusElement = document.getElementById('faceTrackingStatus');
+        if (statusElement) {
+          statusElement.textContent = status;
+        }
       };
       
       // 初始化颜色采样Canvas
@@ -502,6 +672,9 @@
       // 🎬 初始化画面合成系统
       initCompositeSystem();
       
+      // 🎯 初始化面部识别系统
+      const faceTrackingInitialized = initFaceTracking();
+      
       const mindarThree = new MindARThree({
         container: document.querySelector("#container"),
       });
@@ -575,12 +748,54 @@
       console.log('🔍 透明度模式: 半透明 + 透明度遮罩 (opacity:', materialOpacity + ')');
       console.log('🎭 透明度遮罩: canonical_face_eyes.png (黑色=不透明, 白色=透明)');
       console.log('💡 移除的光源: HemisphereLight');
+               console.log('🎯 面部识别: clmtrackr 标准绘制');
       
       scene.add(faceMesh);
       
       const start = async() => {
         await mindarThree.start();
         initColorSampling();
+        
+                 // 🎯 启动面部识别
+         if (faceTrackingInitialized && mindarThree.video) {
+           // 等待视频元数据加载完成
+           const setupFaceTracking = () => {
+             // 调整面部点位画布尺寸
+             adjustFacePointsCanvas(mindarThree.video);
+             
+             const trackingStarted = startFaceTracking(mindarThree.video);
+             if (trackingStarted) {
+               updateFaceTrackingStatus('✅ 面部识别已启动');
+             } else {
+               updateFaceTrackingStatus('❌ 面部识别启动失败');
+             }
+           };
+           
+           if (mindarThree.video.readyState >= 2) {
+             // 视频已经加载完成
+             setupFaceTracking();
+           } else {
+             // 等待视频加载完成
+             mindarThree.video.addEventListener('loadedmetadata', setupFaceTracking, { once: true });
+           }
+           
+           // 监听视频尺寸变化和窗口大小变化
+           mindarThree.video.addEventListener('resize', () => {
+             adjustFacePointsCanvas(mindarThree.video);
+             if (trackingStarted) {
+               ctrack.stop();
+               ctrack.reset();
+               ctrack.start(mindarThree.video);
+             }
+           });
+           
+           // 监听窗口大小变化，重新调整缩放比例
+           window.addEventListener('resize', () => {
+             adjustFacePointsCanvas(mindarThree.video);
+           });
+         } else {
+           updateFaceTrackingStatus('❌ 面部识别初始化失败');
+         }
         
         renderer.setAnimationLoop(() => {
           // 颜色处理
@@ -589,6 +804,11 @@
             applyColorToFaceMesh(faceMesh, faceColor, colorIntensity, colorMode);
           } else {
             applyColorToFaceMesh(faceMesh, customColor, colorIntensity, colorMode);
+          }
+          
+          // 🎯 绘制面部点位
+          if (trackingStarted) {
+            drawFacePoints();
           }
           
           // 先渲染场景
@@ -618,10 +838,19 @@
     <style>
       body {
         margin: 0;
-      }
-      #container {
+        /* 🎯 让容器在页面上居中，并提供一个背景色 */
+        display: flex;
+        justify-content: center;
+        align-items: center;
         width: 100vw;
         height: 100vh;
+        background-color: #111;
+      }
+      #container {
+        /* 🎯 遵循 clm_video.html 的方法，使用预设的初始显示尺寸 1280x720 */
+        /* 这样可以确保视频流和容器的宽高比一致，避免 clmtrackr 坐标错位 */
+        width: 1280px;
+        height: 720px;
         position: relative;
         overflow: hidden;
       }

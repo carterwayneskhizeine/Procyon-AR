@@ -1,10 +1,26 @@
 <html>
 
 <head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- 🎯 添加 clmtrackr 相关脚本 -->
+  <script src="../clmtrackr/examples/js/libs/utils.js"></script>
+  <script src="../clmtrackr/build/clmtrackr.js"></script>
+  <script src="../clmtrackr/examples/js/libs/Stats.js"></script>
+  
   <script type="module">
     import * as THREE from 'three';
     import { MindARThree } from "../src/face-target/three.js";
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    
+    // 🎯 面部识别相关变量 - 用于识别3D模型
+    let ctrack = null;
+    let trackingStarted = false;
+    let facePoints = [];
+    let facePointsCanvas = null;
+    let facePointsCtx = null;
+    let stats = null;
+    let modelRenderCanvas = null; // 用于捕获3D模型渲染结果的画布
+    let modelRenderCtx = null;
 
     // GPU信息检测和显示（和three-facemesh.html一样）
     const checkGPUInfo = async () => {
@@ -70,9 +86,188 @@
       updateFPS();
     };
 
+    // 🎯 初始化面部识别系统 - 用于识别3D模型
+    const initFaceTracking = () => {
+      console.log('🎯 初始化3D模型面部识别系统...');
+      
+      // 初始化 clmtrackr
+      if (typeof clm !== 'undefined') {
+        ctrack = new clm.tracker();
+        ctrack.init();
+        console.log('✅ clmtrackr 初始化成功 (用于3D模型识别)');
+      } else {
+        console.error('❌ clmtrackr 库未加载');
+        return false;
+      }
+      
+      // 创建用于捕获3D模型渲染结果的画布
+      modelRenderCanvas = document.createElement('canvas');
+      modelRenderCanvas.width = 640; // 固定尺寸用于识别
+      modelRenderCanvas.height = 480;
+      modelRenderCtx = modelRenderCanvas.getContext('2d');
+      
+      // 创建面部点位绘制画布覆盖层
+      facePointsCanvas = document.createElement('canvas');
+      facePointsCanvas.id = 'face-points-overlay';
+      facePointsCanvas.style.position = 'absolute';
+      facePointsCanvas.style.top = '0px';
+      facePointsCanvas.style.left = '0px';
+      facePointsCanvas.style.pointerEvents = 'none';
+      facePointsCanvas.style.zIndex = '1000';
+      facePointsCtx = facePointsCanvas.getContext('2d');
+      
+      // 添加到容器
+      const container = document.querySelector('#container');
+      if (container) {
+        container.appendChild(facePointsCanvas);
+        
+        // 🔍 可选：添加调试用的渲染画布显示（用于查看clmtrackr的输入）
+        modelRenderCanvas.style.position = 'absolute';
+        modelRenderCanvas.style.top = '10px';
+        modelRenderCanvas.style.left = '10px';
+        modelRenderCanvas.style.width = '160px';
+        modelRenderCanvas.style.height = '120px';
+        modelRenderCanvas.style.border = '2px solid #00FF00';
+        modelRenderCanvas.style.zIndex = '999';
+        modelRenderCanvas.style.opacity = '0.8';
+        modelRenderCanvas.title = '3D模型识别输入画面';
+        container.appendChild(modelRenderCanvas);
+      }
+      
+      // 初始化统计信息
+      if (typeof Stats !== 'undefined') {
+        stats = new Stats();
+        stats.domElement.style.position = 'absolute';
+        stats.domElement.style.top = '0px';
+        stats.domElement.style.right = '280px'; // 避免与控制面板重叠
+        stats.domElement.style.zIndex = '1002';
+        container.appendChild(stats.domElement);
+        
+        // 监听 clmtrackr 迭代事件
+        document.addEventListener('clmtrackrIteration', function(event) {
+          stats.update();
+        }, false);
+      }
+      
+      return true;
+    };
+    
+    // 🎯 开始3D模型面部跟踪
+    const startFaceTracking = () => {
+      if (!ctrack || !modelRenderCanvas) {
+        console.warn('⚠️ 3D模型面部跟踪初始化失败');
+        return false;
+      }
+      
+      try {
+        // 使用3D模型渲染画布作为输入源
+        ctrack.start(modelRenderCanvas);
+        trackingStarted = true;
+        console.log('✅ 3D模型面部跟踪已启动');
+        return true;
+      } catch (error) {
+        console.error('❌ 启动3D模型面部跟踪失败:', error);
+        return false;
+      }
+    };
+    
+    // 🎯 调整面部点位画布尺寸和缩放比例 - 用于3D模型识别
+    let modelScaleX = 1;
+    let modelScaleY = 1;
+    let modelOffsetX = 0;
+    let modelOffsetY = 0;
+    
+    const adjustFacePointsCanvas = () => {
+      if (!facePointsCanvas || !modelRenderCanvas) return;
+      
+      const container = document.querySelector('#container');
+      
+      if (container) {
+        // 设置覆盖层画布尺寸与容器一致
+        facePointsCanvas.width = container.clientWidth;
+        facePointsCanvas.height = container.clientHeight;
+        facePointsCanvas.style.width = container.clientWidth + 'px';
+        facePointsCanvas.style.height = container.clientHeight + 'px';
+        
+        // 🎯 计算从3D模型识别画布到显示画布的缩放比例
+        const modelRatio = modelRenderCanvas.width / modelRenderCanvas.height;
+        const containerRatio = container.clientWidth / container.clientHeight;
+        
+        let displayWidth, displayHeight;
+        if (modelRatio > containerRatio) {
+          displayHeight = container.clientHeight;
+          displayWidth = displayHeight * modelRatio;
+        } else {
+          displayWidth = container.clientWidth;
+          displayHeight = displayWidth / modelRatio;
+        }
+        
+        // 计算缩放比例和偏移量
+        modelScaleX = displayWidth / modelRenderCanvas.width;
+        modelScaleY = displayHeight / modelRenderCanvas.height;
+        modelOffsetX = (container.clientWidth - displayWidth) / 2;
+        modelOffsetY = (container.clientHeight - displayHeight) / 2;
+        
+        console.log('🎯 3D模型识别画布尺寸和缩放比例调整:', {
+          overlayCanvasSize: `${facePointsCanvas.width}x${facePointsCanvas.height}`,
+          modelCanvasSize: `${modelRenderCanvas.width}x${modelRenderCanvas.height}`,
+          displaySize: `${displayWidth}x${displayHeight}`,
+          scaleX: modelScaleX,
+          scaleY: modelScaleY,
+          offsetX: modelOffsetX,
+          offsetY: modelOffsetY
+        });
+      }
+    };
+    
+    // 🎯 捕获3D模型渲染结果并进行面部识别
+    const captureAndAnalyze3DModel = (renderer) => {
+      if (!modelRenderCtx || !renderer) return;
+      
+      try {
+        // 从Three.js渲染器获取画面并绘制到识别画布
+        const threeCanvas = renderer.domElement;
+        modelRenderCtx.drawImage(threeCanvas, 0, 0, modelRenderCanvas.width, modelRenderCanvas.height);
+      } catch (error) {
+        console.warn('捕获3D模型渲染失败:', error);
+      }
+    };
+    
+    // 🎯 绘制3D模型面部点位（带缩放和偏移）
+    const drawFacePoints = () => {
+      if (!facePointsCtx || !ctrack) return;
+      
+      // 清空覆盖层画布
+      facePointsCtx.clearRect(0, 0, facePointsCanvas.width, facePointsCanvas.height);
+      
+      // 检查是否有面部位置数据
+      if (ctrack.getCurrentPosition()) {
+        // 保存当前上下文状态
+        facePointsCtx.save();
+        
+        // 🎯 应用变换：偏移 + 缩放（识别3D模型，不需要翻转）
+        facePointsCtx.translate(modelOffsetX, modelOffsetY);
+        facePointsCtx.scale(modelScaleX, modelScaleY);
+        
+        // 使用 clmtrackr 内置的绘制方法（在变换后的坐标系中）
+        ctrack.draw(facePointsCanvas);
+        
+        // 恢复上下文状态
+        facePointsCtx.restore();
+      }
+    };
+    
+    // 🎯 更新面部识别状态显示
+    const updateFaceTrackingStatus = (status) => {
+      const statusElement = document.getElementById('faceTrackingStatus');
+      if (statusElement) {
+        statusElement.textContent = status;
+      }
+    };
+
     // 🎨 自定义贴图开关 - 设置为 true 启用自定义贴图
     const USE_CUSTOM_TEXTURE = true; // 改为 false 可关闭自定义贴图
-    const CUSTOM_TEXTURE_PATH = "../enhanced_texture.png";  //_blackWhite
+    const CUSTOM_TEXTURE_PATH = "../ChatGPT_Image.png";  //_blackWhite  enhanced_texture.png
     
     // 🎨 共享调色板配置管理
     const ColorPaletteManager = {
@@ -155,7 +350,13 @@
       controlPanel.id = 'color-control-panel';
       controlPanel.innerHTML = `
         <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; z-index: 1001; width: 250px;">
-          <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 (Mesh无光照版)</h3>
+          <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 + 🎯 面部识别</h3>
+          
+          <div style="margin-bottom: 10px; padding: 8px; background: #333; border-radius: 4px;">
+            <div style="color: #00FF00; font-weight: bold; margin-bottom: 5px;">🎯 3D模型面部识别</div>
+            <div id="faceTrackingStatus" style="color: #888;">初始化中...</div>
+            <div style="font-size: 10px; color: #666; margin-top: 3px;">识别3D脸部模型的面部特征</div>
+          </div>
           
           <div style="margin-bottom: 10px;">
             <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
@@ -211,7 +412,8 @@
           
           <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
             配置自动同步到Texture版本<br/>
-            🚫 无光照材质 | MeshBasicMaterial
+            🚫 无光照材质 | MeshBasicMaterial<br/>
+            🎯 识别3D模型 + 面部轮廓显示
           </div>
         </div>
       `;
@@ -478,6 +680,7 @@
         console.log('🚫 光照模式: 无光照 (MeshBasicMaterial)');
         console.log('💡 移除的光源: HemisphereLight');
         console.log(`🎨 转换材质数量: ${this.materials.length}`);
+        console.log('🎯 面部识别: 识别3D模型面部特征');
       }
       
       updateBlendshapes(blendshapes) {
@@ -641,6 +844,32 @@
       // 初始化颜色采样系统
       initColorSampling();
       
+      // 🎯 初始化3D模型面部识别系统
+      const faceTrackingInitialized = initFaceTracking();
+      
+      // 🎯 启动3D模型面部识别
+      if (faceTrackingInitialized) {
+        // 调整面部点位画布尺寸
+        adjustFacePointsCanvas();
+        
+        // 延迟启动面部跟踪，等待3D模型渲染稳定
+        setTimeout(() => {
+          const trackingStarted = startFaceTracking();
+          if (trackingStarted) {
+            updateFaceTrackingStatus('✅ 3D模型面部识别已启动');
+          } else {
+            updateFaceTrackingStatus('❌ 3D模型面部识别启动失败');
+          }
+        }, 1000); // 1秒延迟，确保3D模型渲染稳定
+        
+        // 监听窗口大小变化，重新调整缩放比例
+        window.addEventListener('resize', () => {
+          adjustFacePointsCanvas();
+        });
+      } else {
+        updateFaceTrackingStatus('❌ 3D模型面部识别初始化失败');
+      }
+      
       // 添加视频流到右下角
       const feedVideo = document.createElement('video');
       feedVideo.id = 'video-feed';
@@ -726,6 +955,15 @@
           }
         }
         
+        // 先渲染3D场景
+        renderer.render(scene, camera);
+        
+        // 🎯 捕获3D模型渲染结果进行面部识别
+        if (trackingStarted) {
+          captureAndAnalyze3DModel(renderer);
+          drawFacePoints();
+        }
+        
         // 添加额外的位置平滑处理
         if (anchor.group.visible) {
           const currentMatrix = anchor.group.matrix.elements;
@@ -745,8 +983,6 @@
           anchor.group.matrix.elements[13] = lastPosition.y;
           anchor.group.matrix.elements[14] = lastPosition.z;
         }
-        
-        renderer.render(scene, camera);
       });
     }
     
