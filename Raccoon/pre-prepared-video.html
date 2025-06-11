@@ -247,19 +247,11 @@
 
             startHttpPolling() {
                 console.log('🔄 启动 HTTP 轮询模式...');
-                this.updateStatus('使用 HTTP 轮询模式', 'warning');
+                this.updateStatus('HTTP 轮询模式暂不可用', 'warning');
                 
-                const pollInterval = setInterval(async () => {
-                    try {
-                        const response = await fetch('http://localhost:3001/api/get-composite-frame');
-                        if (response.ok) {
-                            const blob = await response.blob();
-                            this.handleCompositeFrame(blob);
-                        }
-                    } catch (error) {
-                        console.warn('HTTP 轮询失败:', error);
-                    }
-                }, 33); // ~30 FPS
+                // 注意：由于删除了 face-landmarks-server.cjs，HTTP API 不再可用
+                // 请确保 WebSocket 服务器正在运行以接收合成画面
+                console.warn('⚠️ HTTP API 不可用，请使用 WebSocket 连接');
             }
 
             handleCompositeFrame(data) {

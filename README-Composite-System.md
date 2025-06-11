@@ -34,13 +34,10 @@ index-pure-texture.html  →   composite-server.js  →   pre-prepared-video.htm
 
 ### 方法二：手动启动
 ```bash
-# 1. 启动人脸特征点服务器
-node face-landmarks-server.cjs
+# 1. 启动画面合成WebSocket服务器
+node composite-server.cjs
 
-# 2. 启动画面合成WebSocket服务器
-node composite-server.js
-
-# 3. 打开浏览器访问
+# 2. 打开浏览器访问
 # 发送端: http://localhost:8080/Raccoon/index-pure-texture.html
 # 接收端: http://localhost:8080/Raccoon/pre-prepared-video.html
 ```

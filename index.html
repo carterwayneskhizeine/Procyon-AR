@@ -31,27 +31,26 @@
         <h2>🆕 Custom Examples (自定义示例)</h2>
         <ul>
             <li><a href="Raccoon/index.html">🦝 Raccoon Face Tracking (ES模块版)</a> - 现代浏览器，可能有缓存问题</li>
-            <li><a href="Raccoon/index-pure-texture.html">🦝 Raccoon Face Tracking (纹理版) ⭐</a> - FaceMesh + 透明度遮罩 + 68点跟踪</li>
-            <li><a href="Raccoon/index-pure-mesh.html">🦝 Raccoon Face Tracking (网格版) ⭐</a> - GLB模型 + 无光照 + 68点跟踪</li>
-            <li><a href="Raccoon/pre-prepared-video.html">🦝 合成画面⭐</a> - </li>
+            <li><a href="Raccoon/index-pure-texture.html">🦝 Raccoon Face Tracking (纹理版) ⭐</a> - FaceMesh + 透明度遮罩</li>
+            <li><a href="Raccoon/index-pure-mesh.html">🦝 Raccoon Face Tracking (网格版) ⭐</a> - GLB模型 + 无光照</li>
+            <li><a href="Raccoon/pre-prepared-video.html">🦝 合成画面⭐</a> - 画面合成显示器</li>
         </ul>
         
         <h3>💡 使用建议</h3>
         <p><strong>推荐顺序：</strong></p>
         <ol>
-            <li><strong>纹理版 ⭐</strong> - FaceMesh + 透明度遮罩，眼睛嘴部透明，68点人脸跟踪</li>
-            <li><strong>网格版 ⭐</strong> - 3D浣熊模型，无光照渲染，68点人脸跟踪</li>
+            <li><strong>纹理版 ⭐</strong> - FaceMesh + 透明度遮罩，眼睛嘴部透明</li>
+            <li><strong>网格版 ⭐</strong> - 3D浣熊模型，无光照渲染</li>
             <li><strong>ES模块版</strong> - 基础版本，如果有兼容性问题可尝试</li>
-            <li><strong>合成画面</strong> - </li>
+            <li><strong>合成画面</strong> - 用于显示合成后的画面</li>
         </ol>
         
         <h3>🔧 问题排查</h3>
         <p>如果遇到问题：</p>
         <ul>
-            <li>✅ <strong>依赖安装</strong>：项目已包含 three@0.160.0 + clmtrackr</li>
+            <li>✅ <strong>依赖安装</strong>：项目已包含 three@0.160.0</li>
             <li>🔄 <strong>清除缓存</strong>：按 <kbd>Ctrl + Shift + R</kbd></li>
-            <li>🎯 <strong>服务器运行</strong>：确保 <code>node face-landmarks-server.cjs</code> 在运行</li>
-            <li>📊 <strong>人脸跟踪</strong>：检查 <code>swap_point/</code> 文件夹中的JSON文件</li>
+            <li>🎯 <strong>画面合成</strong>：如需合成功能，运行 <code>node composite-server.cjs</code></li>
             <li>🔍 <strong>控制台</strong>：按 F12 查看详细错误信息</li>
         </ul>
     </body>

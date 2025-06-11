@@ -1,8 +1,6 @@
 <html>
 
 <head>
-  <!-- 👁️ 引入 clmtrackr 库 -->
-  <script src="../node_modules/clmtrackr/build/clmtrackr.js"></script>
   <script type="module">
     import * as THREE from 'three';
     import { MindARThree } from "../src/face-target/three.js";
@@ -211,16 +209,9 @@
             <button id="warmToneBtn" style="background: #8B4513; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">暖色调</button>
           </div>
           
-                      <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
-              配置自动同步到Texture版本<br/>
-              🚫 无光照材质 | MeshBasicMaterial
-            </div>
-          
-          <div id="trackingStatus" style="margin-top: 8px; padding: 5px; background: #222; border-radius: 3px; text-align: center; font-size: 10px;">
-            <div style="color: #FFD700;">👁️ clmtrackr 人脸跟踪</div>
-            <div id="trackingStatusText" style="color: #ff6b6b;">未开始跟踪</div>
-            <div id="landmarkCount" style="color: #4ecdc4; font-size: 9px;">特征点: 0/68</div>
-            <div id="saveStatus" style="color: #45b7d1; font-size: 9px;">保存: 待命中</div>
+          <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
+            配置自动同步到Texture版本<br/>
+            🚫 无光照材质 | MeshBasicMaterial
           </div>
         </div>
       `;
@@ -331,48 +322,6 @@
       
       // 初始化显示
       updateColor();
-      
-      // 👁️ 添加测试按钮 (Local版)
-      const testBtn = document.createElement('button');
-      testBtn.textContent = '🧪 测试保存(Mesh)';
-      testBtn.style.cssText = 'position: fixed; top: 400px; right: 10px; background: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; z-index: 1002; font-size: 11px;';
-      testBtn.onclick = () => {
-        // 测试保存功能
-        const testData = {
-          timestamp: Date.now(),
-          frameCount: 999,
-          isTracking: true,
-          landmarks: Array.from({length: 68}, (_, i) => ({
-            id: i,
-            x: Math.random() * 320,
-            y: Math.random() * 240,
-            timestamp: Date.now()
-          })),
-          source: 'index-pure-mesh',
-          metadata: {
-            totalPoints: 68,
-            canvasSize: { width: 320, height: 240 },
-            saveInterval: SAVE_INTERVAL,
-            version: 'mesh-glb-model'
-          }
-        };
-        
-        fetch('http://localhost:3001/api/save-landmarks-local', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(testData)
-        })
-        .then(response => response.json())
-        .then(result => {
-          console.log('🧪 Mesh版测试保存结果:', result);
-          alert('Mesh版测试保存成功！检查 swap_point/face_landmarks_mesh.json');
-        })
-        .catch(error => {
-          console.error('🧪 Mesh版测试保存失败:', error);
-          alert('Mesh版测试保存失败：' + error.message);
-        });
-      };
-      document.body.appendChild(testBtn);
     };
     
     // 创建控制面板
@@ -621,15 +570,6 @@
     
     // 🎨 颜色控制设置已在前面声明
     
-    // 👁️ clmtrackr 人脸跟踪相关变量
-    let ctracker = null;
-    let trackingCanvas = null;
-    let trackingCtx = null;
-    let faceLandmarks = [];
-    let isTracking = false;
-    let lastSaveTime = 0;
-    const SAVE_INTERVAL = 100; // 每100ms保存一次，避免过于频繁
-    
     // 初始化颜色采样Canvas
     const initColorSampling = () => {
       colorCanvas = document.createElement('canvas');
@@ -693,181 +633,13 @@
       
       return lastFaceColor;
     };
-    
-    // 👁️ 初始化 clmtrackr 人脸跟踪
-    const initFaceTracking = () => {
-      try {
-        // 检查 clmtrackr 是否已加载
-        if (typeof clm === 'undefined') {
-          console.error('❌ clmtrackr 库未加载');
-          return;
-        }
-        
-        // 创建跟踪用的canvas
-        trackingCanvas = document.createElement('canvas');
-        trackingCanvas.width = 320;
-        trackingCanvas.height = 240;
-        trackingCtx = trackingCanvas.getContext('2d');
-        
-        // 初始化clmtrackr
-        ctracker = new clm.tracker();
-        ctracker.init();
-        
-        console.log('👁️ clmtrackr 初始化成功 (Mesh版)');
-        console.log('📊 人脸特征点数量: 68点');
-        console.log('💾 保存位置: /swap_point/face_landmarks_mesh.json');
-        console.log('🔧 跟踪画布尺寸:', trackingCanvas.width + 'x' + trackingCanvas.height);
-        
-      } catch (error) {
-        console.error('❌ clmtrackr 初始化失败:', error);
-      }
-    };
-    
-    // 👁️ 人脸跟踪处理函数
-    const trackFaceLandmarks = (video) => {
-      if (!ctracker || !trackingCtx || !video) {
-        return;
-      }
-      
-      try {
-        // 将视频帧绘制到跟踪canvas
-        trackingCtx.drawImage(video, 0, 0, trackingCanvas.width, trackingCanvas.height);
-        
-        // 获取人脸特征点
-        const positions = ctracker.track(trackingCanvas);
-        
-        if (positions && positions.length === 68) {
-          faceLandmarks = positions.map((point, index) => ({
-            id: index,
-            x: point[0],
-            y: point[1],
-            timestamp: Date.now()
-          }));
-          
-          isTracking = true;
-          
-          // 定时保存到文件
-          const now = Date.now();
-          if (now - lastSaveTime > SAVE_INTERVAL) {
-            saveFaceLandmarks();
-            lastSaveTime = now;
-          }
-          
-        } else {
-          isTracking = false;
-        }
-        
-      } catch (error) {
-        console.warn('⚠️ 人脸跟踪处理失败:', error);
-        isTracking = false;
-      }
-    };
-    
-    // 💾 保存人脸特征点到JSON文件 (Local版本)
-    const saveFaceLandmarks = async () => {
-      if (!faceLandmarks || faceLandmarks.length === 0) return;
-      
-      try {
-        const data = {
-          timestamp: Date.now(),
-          frameCount: colorUpdateCounter,
-          isTracking: isTracking,
-          landmarks: faceLandmarks,
-          source: 'index-pure-mesh', // 标识数据源
-          metadata: {
-            totalPoints: faceLandmarks.length,
-            canvasSize: {
-              width: trackingCanvas.width,
-              height: trackingCanvas.height
-            },
-            saveInterval: SAVE_INTERVAL,
-            version: 'mesh-glb-model'
-          }
-        };
-        
-        // 使用不同的API端点保存到不同文件
-        const response = await fetch('http://localhost:3001/api/save-landmarks-local', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(data)
-        });
-        
-        if (!response.ok) {
-          // 如果API不可用，使用localStorage作为备选
-          localStorage.setItem('face_landmarks_mesh_backup', JSON.stringify(data));
-          console.log('📱 Mesh人脸特征点已保存到localStorage (API响应:', response.status + ')');
-        } else {
-          const result = await response.json();
-          console.log('✅ Mesh人脸特征点已保存到文件:', result.pointCount, '个特征点');
-        }
-        
-      } catch (error) {
-        // 备选方案：保存到localStorage
-        try {
-          const data = {
-            timestamp: Date.now(),
-            frameCount: colorUpdateCounter,
-            isTracking: isTracking,
-            landmarks: faceLandmarks,
-            source: 'index-pure-mesh'
-          };
-          localStorage.setItem('face_landmarks_mesh_backup', JSON.stringify(data));
-          console.log('📱 Mesh人脸特征点已保存到localStorage');
-        } catch (storageError) {
-          console.warn('❌ 保存Mesh人脸特征点失败:', error, storageError);
-        }
-      }
-    };
-    
-    // 👁️ 更新人脸跟踪状态显示
-    const updateTrackingStatus = () => {
-      const statusText = document.getElementById('trackingStatusText');
-      const landmarkCount = document.getElementById('landmarkCount');
-      const saveStatus = document.getElementById('saveStatus');
-      
-      if (statusText && landmarkCount && saveStatus) {
-        if (isTracking) {
-          statusText.textContent = '✅ 正在跟踪';
-          statusText.style.color = '#4ecdc4';
-          landmarkCount.textContent = `特征点: ${faceLandmarks.length}/68`;
-          landmarkCount.style.color = '#4ecdc4';
-        } else {
-          statusText.textContent = '🔍 寻找人脸...';
-          statusText.style.color = '#ffa726';
-          landmarkCount.textContent = '特征点: 0/68';
-          landmarkCount.style.color = '#666';
-        }
-        
-        const now = Date.now();
-        if (now - lastSaveTime < 500) {
-          saveStatus.textContent = '💾 已保存';
-          saveStatus.style.color = '#4ecdc4';
-        } else {
-          saveStatus.textContent = '💾 保存中...';
-          saveStatus.style.color = '#45b7d1';
-        }
-      }
-    };
 
-          const start = async () => {
-        console.log('🚀 启动 脸部模型面部跟踪（纯本地源码）...');
+    const start = async () => {
+      console.log('🚀 启动 脸部模型面部跟踪（纯本地源码）...');
       await mindarThree.start();
       
       // 初始化颜色采样系统
       initColorSampling();
-      
-      // 👁️ 初始化人脸跟踪
-      initFaceTracking();
-      
-      // 👁️ 启动 clmtrackr 跟踪 (延迟启动)
-      if (ctracker && mindarThree.video) {
-        setTimeout(() => {
-          ctracker.start(mindarThree.video);
-          console.log('🎯 clmtrackr 开始跟踪视频流 (Mesh版)');
-        }, 1000); // 延迟1秒确保视频流准备好
-      }
       
       // 添加视频流到右下角
       const feedVideo = document.createElement('video');
@@ -951,12 +723,6 @@
             const rgb = `rgb(${Math.round(displayColor.r * 255)}, ${Math.round(displayColor.g * 255)}, ${Math.round(displayColor.b * 255)})`;
             const colorType = useAutoColor ? '自动采样' : '手动设置';
             colorInfo.innerHTML = `🎨 肤色 (${colorType}): <span style="color: ${rgb};">●</span> ${rgb}`;
-          }
-          
-          // 👁️ 人脸特征点跟踪
-          if (ctracker) {
-            trackFaceLandmarks(mindarThree.video);
-            updateTrackingStatus();
           }
         }
         
