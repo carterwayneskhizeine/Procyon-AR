@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎬 Pre-prepared Video Stream - 合成画面显示器</title>
+    <title>🎬 Pre-prepared Video Stream - 合成画面显示器 + 面部形变</title>
     <style>
         body {
             margin: 0;
@@ -30,6 +30,10 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
+        }
+
+        #deformCanvas {
+            display: none; /* 用作离屏形变渲染，不直接显示 */
         }
 
         #info-panel {
@@ -108,20 +112,36 @@
         .warning {
             color: #ffa726;
         }
+
+        /* 形变控制面板 */
+        #deform-controls {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            z-index: 1000;
+            border-left: 4px solid #00FF00;
+        }
     </style>
 </head>
 <body>
     <div id="container">
         <canvas id="compositeCanvas"></canvas>
+        <canvas id="deformCanvas"></canvas>
     </div>
 
     <div id="info-panel">
-        <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎬 合成画面显示器</h3>
+        <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎬 合成画面显示器 + 🎭 面部形变</h3>
         <div><strong>状态:</strong> <span id="connectionStatus">等待连接...</span></div>
         <div><strong>分辨率:</strong> <span id="resolution">-</span></div>
         <div><strong>帧率:</strong> <span id="fps">0</span> FPS</div>
         <div><strong>数据源:</strong> <span id="dataSource">WebSocket</span></div>
-        <div><strong>合成模式:</strong> <span id="compositeMode">实时合成</span></div>
+        <div><strong>合成模式:</strong> <span id="compositeMode">实时合成 + 面部形变</span></div>
+        <div><strong>形变状态:</strong> <span id="deformStatus">初始化中...</span></div>
     </div>
 
     <div id="controls">
@@ -153,16 +173,58 @@
         </div>
     </div>
 
+    <div id="deform-controls">
+        <h4 style="margin: 0 0 10px 0; color: #00FF00;">🎭 面部形变控制</h4>
+        
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="enableDeform" checked> 启用面部形变
+            </label>
+        </div>
+
+        <div class="control-group">
+            <label>形变强度: <span id="deformIntensityValue">100%</span></label>
+            <input type="range" id="deformIntensitySlider" min="0" max="200" value="100">
+        </div>
+
+        <div class="control-group">
+            <label>形变模式:</label>
+            <select id="deformMode" style="width: 100%; padding: 3px; background: #333; color: white; border: 1px solid #555;">
+                <option value="test">测试模式 (硬编码)</option>
+                <option value="slim" selected>瘦脸模式</option>
+                <option value="custom">自定义形变</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <button id="testDeformBtn">测试形变</button>
+            <button id="resetDeformBtn">重置形变</button>
+        </div>
+
+        <div style="font-size: 10px; color: #888; margin-top: 5px;">
+            WebGL 实时面部形变 + Delaunay 三角剖分
+        </div>
+    </div>
+
     <div id="status">
         <div id="statusText">准备接收合成画面...</div>
         <div id="errorLog"></div>
     </div>
+
+    <!-- 🎭 面部形变依赖库 -->
+    <script src="../clmtrackr/examples/js/libs/utils.js"></script>
+    <script src="../clmtrackr/examples/js/libs/webgl-utils.js"></script>
+    <script src="../clmtrackr/build/clmtrackr.js"></script>
+    <script src="../clmtrackr/models/model_pca_20_svm.js"></script>
+    <script src="../clmtrackr/examples/js/face_deformer.js"></script>
+    <script src="../clmtrackr/examples/js/libs/poisson_new.js"></script>
 
     <script>
         class CompositeVideoReceiver {
             constructor() {
                 this.canvas = document.getElementById('compositeCanvas');
                 this.ctx = this.canvas.getContext('2d');
+                this.deformCanvas = document.getElementById('deformCanvas');
                 this.websocket = null;
                 this.isConnected = false;
                 this.frameCount = 0;
@@ -171,8 +233,26 @@
                 this.brightness = 1.0;
                 this.contrast = 1.0;
                 
+                // 🎭 面部形变相关
+                this.faceDeformer = null;
+                this.isDeformEnabled = true;
+                this.deformIntensity = 1.0;
+                this.deformMode = 'slim';
+                this.webGLContext = null;
+                this.isDeformReady = false;
+                
+                // 🌐 WebSocket 关键点接收相关
+                this.landmarkSocket = null;
+                this.isLandmarkSocketConnected = false;
+                this.sourcePtsCache = null; // 我的轮廓 (来自 index-pure-texture.html)
+                this.targetPtsCache = null; // 明星轮廓 (来自 index-pure-mesh.html)
+                this.lastSourceFrame = 0;
+                this.lastTargetFrame = 0;
+                
                 this.initializeUI();
+                this.initFaceDeform();
                 this.connectToSource();
+                this.initLandmarkSocket();
                 this.setupControls();
             }
 
@@ -180,9 +260,294 @@
                 // 设置画布初始尺寸
                 this.canvas.width = 640;
                 this.canvas.height = 480;
+                this.deformCanvas.width = 640;
+                this.deformCanvas.height = 480;
                 
                 // 显示等待画面
                 this.drawWaitingScreen();
+            }
+
+            // 🎭 初始化面部形变系统
+            async initFaceDeform() {
+                try {
+                    console.log('🎭 初始化面部形变系统...');
+                    
+                    // 检查 WebGL 支持
+                    this.webGLContext = this.deformCanvas.getContext('webgl') || this.deformCanvas.getContext('experimental-webgl');
+                    if (!this.webGLContext || !this.webGLContext.getExtension('OES_texture_float')) {
+                        throw new Error('WebGL 或 OES_texture_float 扩展不支持');
+                    }
+                    
+                    // 初始化 faceDeformer
+                    if (typeof faceDeformer !== 'undefined') {
+                        this.faceDeformer = new faceDeformer();
+                        this.faceDeformer.init(this.deformCanvas);
+                        this.isDeformReady = true;
+                        console.log('✅ faceDeformer 初始化成功');
+                        this.updateDeformStatus('✅ 面部形变系统就绪');
+                        // 透明背景，便于与原始画面叠加
+                        if (this.webGLContext) {
+                            this.webGLContext.clearColor(0, 0, 0, 0);
+                        }
+                    } else {
+                        throw new Error('faceDeformer 类未找到');
+                    }
+                    
+                } catch (error) {
+                    console.error('❌ 面部形变初始化失败:', error);
+                    this.updateDeformStatus('❌ 面部形变初始化失败: ' + error.message);
+                    this.isDeformReady = false;
+                }
+            }
+
+            // 🎭 硬编码测试点位数据
+            getTestPoints() {
+                // 硬编码的 71 个面部关键点 (标准脸型)
+                const sourcePoints = [
+                    // 脸部轮廓 0-14
+                    [150, 180], [160, 190], [170, 200], [180, 210], [190, 220],
+                    [200, 230], [210, 240], [220, 250], [230, 240], [240, 230],
+                    [250, 220], [260, 210], [270, 200], [280, 190], [290, 180],
+                    
+                    // 右眉 15-18
+                    [170, 160], [180, 155], [190, 155], [200, 160],
+                    
+                    // 左眉 19-22  
+                    [240, 160], [250, 155], [260, 155], [270, 160],
+                    
+                    // 左眼外圈 23-26
+                    [180, 170], [190, 165], [200, 170], [190, 175],
+                    
+                    // 左眼中心 27
+                    [190, 170],
+                    
+                    // 右眼外圈 28-31
+                    [250, 170], [240, 165], [250, 175], [260, 170],
+                    
+                    // 右眼中心 32
+                    [250, 170],
+                    
+                    // 鼻子区域 33-43
+                    [220, 150], [210, 180], [215, 185], [220, 190], [225, 185],
+                    [230, 180], [225, 195], [220, 200], [215, 195], [220, 205],
+                    [220, 185],
+                    
+                    // 嘴巴外轮廓 44-55
+                    [200, 220], [205, 225], [210, 228], [215, 230], [220, 230], [225, 230],
+                    [230, 230], [235, 228], [240, 225], [235, 235], [230, 240], [225, 240],
+                    
+                    // 嘴巴内轮廓 56-61
+                    [210, 230], [215, 232], [220, 232], [225, 232], [230, 230], [220, 235],
+                    
+                    // 鼻尖上方 62
+                    [220, 180],
+                    
+                    // 左眼下方额外点 63-66
+                    [185, 175], [195, 180], [205, 175], [200, 180],
+                    
+                    // 右眼下方额外点 67-70
+                    [235, 175], [245, 180], [255, 175], [250, 180]
+                ];
+
+                // 目标点位（瘦脸效果：收窄脸部轮廓）
+                const targetPoints = sourcePoints.map((point, index) => {
+                    let [x, y] = point;
+                    
+                    // 对脸部轮廓进行瘦脸处理
+                    if (index <= 14) { // 脸部轮廓点 (0-14)
+                        const centerX = 220; // 脸部中心X坐标
+                        
+                        // 根据不同区域使用不同的收窄系数
+                        let factor;
+                        if (index <= 3 || index >= 11) {
+                            // 脸颊区域 - 更强的收窄
+                            factor = 0.6;
+                        } else if (index <= 7) {
+                            // 下颌区域 - 中等收窄
+                            factor = 0.75;
+                        } else {
+                            // 其他区域 - 轻微收窄
+                            factor = 0.85;
+                        }
+                        
+                        x = centerX + (x - centerX) * factor;
+                    }
+                    
+                    return [x, y];
+                });
+
+                return { sourcePoints, targetPoints };
+            }
+
+            // 🌐 初始化关键点接收 WebSocket
+            initLandmarkSocket() {
+                try {
+                    console.log('🌐 连接关键点接收服务器...');
+                    this.landmarkSocket = new WebSocket('ws://localhost:3003?type=receiver');
+                    
+                    this.landmarkSocket.onopen = () => {
+                        console.log('✅ 关键点接收 WebSocket 连接成功');
+                        this.isLandmarkSocketConnected = true;
+                        this.updateDeformStatus('✅ 面部形变系统就绪 + WebSocket连接成功');
+                    };
+                    
+                    this.landmarkSocket.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            
+                            if (message.type === 'landmarks') {
+                                if (message.role === 'source') {
+                                    // 接收我的轮廓数据
+                                    this.sourcePtsCache = message.pts71;
+                                    this.lastSourceFrame = message.frame || Date.now();
+                                    
+                                    console.log(`🌐 接收 source 轮廓: ${this.sourcePtsCache.length} 个点 (frame: ${this.lastSourceFrame})`);
+                                } else if (message.role === 'target') {
+                                    // 接收明星轮廓数据
+                                    this.targetPtsCache = message.pts71;
+                                    this.lastTargetFrame = message.frame || Date.now();
+                                    
+                                    console.log(`🌐 接收 target 轮廓: ${this.targetPtsCache.length} 个点 (frame: ${this.lastTargetFrame})`);
+                                }
+                                
+                                // 更新状态显示
+                                const status = `source: ${this.sourcePtsCache ? '✅' : '❌'} | target: ${this.targetPtsCache ? '✅' : '❌'}`;
+                                this.updateDeformStatus(`🌐 实时数据: ${status}`);
+                            } else if (message.type === 'welcome') {
+                                console.log('🌐 收到欢迎消息:', message.message);
+                            }
+                            
+                        } catch (error) {
+                            console.warn('⚠️ 关键点 WebSocket 消息解析失败:', error);
+                        }
+                    };
+                    
+                    this.landmarkSocket.onclose = () => {
+                        console.log('❌ 关键点接收 WebSocket 连接断开');
+                        this.isLandmarkSocketConnected = false;
+                        this.updateDeformStatus('⚠️ 形变系统运行中，WebSocket已断开');
+                        
+                        // 5秒后尝试重连
+                        setTimeout(() => {
+                            if (!this.isLandmarkSocketConnected) {
+                                this.initLandmarkSocket();
+                            }
+                        }, 5000);
+                    };
+                    
+                    this.landmarkSocket.onerror = (error) => {
+                        console.error('❌ 关键点接收 WebSocket 错误:', error);
+                        this.isLandmarkSocketConnected = false;
+                    };
+                    
+                } catch (error) {
+                    console.error('❌ 关键点接收 WebSocket 初始化失败:', error);
+                    this.isLandmarkSocketConnected = false;
+                }
+            }
+
+            // 🎭 执行面部形变
+            performFaceDeform(sourceImage) {
+                if (!this.isDeformReady || !this.isDeformEnabled || !this.faceDeformer) {
+                    return sourceImage;
+                }
+
+                try {
+                    let sourcePoints, targetPoints;
+                    
+                    // 🌐 使用实时数据进行形变 (支持 test 和 slim 模式)
+                    if (this.sourcePtsCache && (this.deformMode === 'test' || this.deformMode === 'slim')) {
+                        // 使用实时接收的我的轮廓作为 source
+                        sourcePoints = this.sourcePtsCache;
+                        
+                        // 生成瘦脸目标点 (对轮廓进行收窄)
+                        targetPoints = sourcePoints.map((point, index) => {
+                            let [x, y] = point;
+                            
+                            // 对脸部轮廓进行瘦脸处理
+                            if (index <= 14) { // 脸部轮廓点 (0-14)
+                                // 使用面部中心作为基准点
+                                const leftCheek = sourcePoints[0] ? sourcePoints[0][0] : x;
+                                const rightCheek = sourcePoints[14] ? sourcePoints[14][0] : x;
+                                const centerX = (leftCheek + rightCheek) / 2;
+                                
+                                // 根据不同区域使用不同的收窄系数
+                                let factor;
+                                if (index <= 3 || index >= 11) {
+                                    // 脸颊区域 - 更强的收窄
+                                    factor = 0.6;
+                                } else if (index <= 7) {
+                                    // 下颌区域 - 中等收窄
+                                    factor = 0.75;
+                                } else {
+                                    // 其他区域 - 轻微收窄
+                                    factor = 0.85;
+                                }
+                                
+                                x = centerX + (x - centerX) * factor;
+                            }
+                            
+                            return [x, y];
+                        });
+                        
+                        // 计算瘦脸效果统计
+                        const faceWidth = Math.abs(sourcePoints[14][0] - sourcePoints[0][0]);
+                        const targetWidth = Math.abs(targetPoints[14][0] - targetPoints[0][0]);
+                        const slimmingRate = ((faceWidth - targetWidth) / faceWidth * 100).toFixed(1);
+                        
+                        console.log(`🌐 使用实时 source 数据进行形变 - 瘦脸效果: ${slimmingRate}%`);
+                    } else {
+                        // 回退到硬编码测试数据
+                        const testData = this.getTestPoints();
+                        sourcePoints = testData.sourcePoints;
+                        targetPoints = testData.targetPoints;
+                        
+                        console.log('🔄 使用硬编码测试数据进行形变');
+                    }
+                    
+                    // const vertices = this.getVertices();
+                    
+                    // 应用形变强度
+                    const interpolatedPoints = sourcePoints.map((sourcePoint, index) => {
+                        const targetPoint = targetPoints[index];
+                        return [
+                            sourcePoint[0] + (targetPoint[0] - sourcePoint[0]) * this.deformIntensity,
+                            sourcePoint[1] + (targetPoint[1] - sourcePoint[1]) * this.deformIntensity
+                        ];
+                    });
+
+                    // 创建临时画布
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = sourceImage.width || this.canvas.width;
+                    tempCanvas.height = sourceImage.height || this.canvas.height;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    
+                    // 绘制源图像到临时画布
+                    if (sourceImage instanceof HTMLImageElement || sourceImage instanceof HTMLCanvasElement) {
+                        tempCtx.drawImage(sourceImage, 0, 0, tempCanvas.width, tempCanvas.height);
+                    } else {
+                        console.warn('⚠️ 源图像格式不支持，跳过形变');
+                        return sourceImage;
+                    }
+
+                    // 加载数据到 faceDeformer
+                    this.faceDeformer.load(tempCanvas, sourcePoints, pModel);
+                    
+                    // 先清空画布，保持透明背景
+                    if (this.webGLContext) {
+                        this.webGLContext.clear(this.webGLContext.COLOR_BUFFER_BIT);
+                    }
+
+                    // 执行形变绘制
+                    this.faceDeformer.draw(interpolatedPoints);
+                    
+                    return this.deformCanvas;
+                    
+                } catch (error) {
+                    console.error('❌ 面部形变执行失败:', error);
+                    this.updateDeformStatus('❌ 形变失败: ' + error.message);
+                    return sourceImage;
+                }
             }
 
             drawWaitingScreen() {
@@ -196,7 +561,7 @@
                 
                 this.ctx.fillStyle = '#888';
                 this.ctx.font = '14px Arial';
-                this.ctx.fillText('请确保 index-pure-texture.html 正在运行', this.canvas.width / 2, this.canvas.height / 2 + 20);
+                this.ctx.fillText('🎭 面部形变系统已启用', this.canvas.width / 2, this.canvas.height / 2 + 20);
             }
 
             connectToSource() {
@@ -264,56 +629,47 @@
                         if (this.canvas.width !== img.width || this.canvas.height !== img.height) {
                             this.canvas.width = img.width;
                             this.canvas.height = img.height;
+                            this.deformCanvas.width = img.width;
+                            this.deformCanvas.height = img.height;
                             document.getElementById('resolution').textContent = `${img.width}x${img.height}`;
                         }
 
-                        // 应用图像处理效果
-                        this.ctx.filter = `brightness(${this.brightness}) contrast(${this.contrast})`;
-                        
-                        // 计算适应屏幕的尺寸（保持宽高比）
-                        const screenWidth = window.innerWidth;
-                        const screenHeight = window.innerHeight;
-                        const imageAspect = img.width / img.height;
-                        const screenAspect = screenWidth / screenHeight;
-                        
-                        let canvasWidth, canvasHeight;
-                        if (imageAspect > screenAspect) {
-                            // 图片更宽，以宽度为准
-                            canvasWidth = screenWidth;
-                            canvasHeight = screenWidth / imageAspect;
-                        } else {
-                            // 图片更高，以高度为准
-                            canvasHeight = screenHeight;
-                            canvasWidth = screenHeight * imageAspect;
+                        // 🎭 如果启用形变，先渲染到 deformCanvas
+                        let hasDeform = false;
+                        if (this.isDeformEnabled && this.isDeformReady) {
+                            this.performFaceDeform(img);
+                            hasDeform = true;
                         }
-                        
-                        // 应用用户设置的缩放
-                        canvasWidth *= this.scale;
-                        canvasHeight *= this.scale;
-                        
-                        // 更新画布尺寸为适应屏幕的尺寸
-                        this.canvas.width = canvasWidth;
-                        this.canvas.height = canvasHeight;
-                        
-                        // 绘制合成画面（填满整个画布，左右翻转）
-                        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-                        
-                        // 保存当前变换状态
+
+                        // 直接根据源帧尺寸计算，保持 1:1 像素映射，再乘用户缩放
+                        let canvasWidth = img.width * this.scale;
+                        let canvasHeight = img.height * this.scale;
+
+                        // 清屏
+                        this.ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+                        // 应用滤镜
+                        this.ctx.filter = `brightness(${this.brightness}) contrast(${this.contrast})`;
+
+                        // 保存状态并翻转
                         this.ctx.save();
-                        
-                        // 应用水平翻转变换
                         this.ctx.scale(-1, 1);
                         this.ctx.translate(-canvasWidth, 0);
-                        
-                        // 绘制翻转后的画面
+
+                        // 先绘制原始画面
                         this.ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
-                        
-                        // 恢复变换状态
+
+                        // 叠加形变后的画布（若有）
+                        if (hasDeform) {
+                            this.ctx.drawImage(this.deformCanvas, 0, 0, canvasWidth, canvasHeight);
+                        }
+
+                        // 恢复状态
                         this.ctx.restore();
-                        
+
                         // 重置滤镜
                         this.ctx.filter = 'none';
-                        
+                         
                         // 更新帧率计算
                         this.updateFrameRate();
                     };
@@ -351,6 +707,14 @@
                 }
             }
 
+            // 🎭 更新形变状态显示
+            updateDeformStatus(status) {
+                const statusElement = document.getElementById('deformStatus');
+                if (statusElement) {
+                    statusElement.textContent = status;
+                }
+            }
+
             setupControls() {
                 // 缩放控制
                 const scaleSlider = document.getElementById('scaleSlider');
@@ -379,6 +743,37 @@
                     contrastValue.textContent = e.target.value + '%';
                 });
 
+                // 🎭 面部形变控制
+                const enableDeform = document.getElementById('enableDeform');
+                const deformIntensitySlider = document.getElementById('deformIntensitySlider');
+                const deformIntensityValue = document.getElementById('deformIntensityValue');
+                const deformMode = document.getElementById('deformMode');
+                const testDeformBtn = document.getElementById('testDeformBtn');
+                const resetDeformBtn = document.getElementById('resetDeformBtn');
+
+                enableDeform.addEventListener('change', (e) => {
+                    this.isDeformEnabled = e.target.checked;
+                    this.updateDeformStatus(this.isDeformEnabled ? '✅ 形变已启用' : '⏸️ 形变已暂停');
+                });
+
+                deformIntensitySlider.addEventListener('input', (e) => {
+                    this.deformIntensity = e.target.value / 100;
+                    deformIntensityValue.textContent = e.target.value + '%';
+                });
+
+                deformMode.addEventListener('change', (e) => {
+                    this.deformMode = e.target.value;
+                    this.updateDeformStatus(`模式已切换: ${e.target.value}`);
+                });
+
+                testDeformBtn.addEventListener('click', () => {
+                    this.testDeformation();
+                });
+
+                resetDeformBtn.addEventListener('click', () => {
+                    this.resetDeformation();
+                });
+
                 // 全屏按钮
                 document.getElementById('fullscreenBtn').addEventListener('click', () => {
                     if (document.fullscreenElement) {
@@ -404,11 +799,52 @@
                 });
             }
 
+            // 🎭 测试形变功能
+            testDeformation() {
+                if (!this.isDeformReady) {
+                    this.updateDeformStatus('❌ 形变系统未就绪');
+                    return;
+                }
+
+                try {
+                    // 创建测试图像
+                    const testCanvas = document.createElement('canvas');
+                    testCanvas.width = 640;
+                    testCanvas.height = 480;
+                    const testCtx = testCanvas.getContext('2d');
+                    
+                    // 绘制测试图像
+                    testCtx.fillStyle = '#f0f0f0';
+                    testCtx.fillRect(0, 0, 640, 480);
+                    testCtx.fillStyle = '#333';
+                    testCtx.font = '30px Arial';
+                    testCtx.textAlign = 'center';
+                    testCtx.fillText('🎭 形变测试', 320, 240);
+                    
+                    // 执行形变
+                    const result = this.performFaceDeform(testCanvas);
+                    this.updateDeformStatus('✅ 形变测试完成');
+                    
+                } catch (error) {
+                    console.error('❌ 形变测试失败:', error);
+                    this.updateDeformStatus('❌ 形变测试失败: ' + error.message);
+                }
+            }
+
+            // 🎭 重置形变
+            resetDeformation() {
+                this.deformIntensity = 1.0;
+                document.getElementById('deformIntensitySlider').value = 100;
+                document.getElementById('deformIntensityValue').textContent = '100%';
+                this.updateDeformStatus('🔄 形变参数已重置');
+            }
+
             saveCurrentFrame() {
                 try {
+                    const activeCanvas = this.isDeformEnabled && this.isDeformReady ? this.deformCanvas : this.canvas;
                     const link = document.createElement('a');
                     link.download = `composite-frame-${Date.now()}.png`;
-                    link.href = this.canvas.toDataURL();
+                    link.href = activeCanvas.toDataURL();
                     link.click();
                     
                     this.updateStatus('当前帧已保存', 'success');
@@ -454,7 +890,7 @@
 
         // 页面加载完成后初始化
         document.addEventListener('DOMContentLoaded', () => {
-            console.log('🎬 合成画面显示器已启动');
+            console.log('🎬 合成画面显示器 + 🎭 面部形变系统已启动');
             const receiver = new CompositeVideoReceiver();
             
             // 全局错误处理
