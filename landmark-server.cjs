@@ -69,7 +69,7 @@ wss.on('connection', (ws, request) => {
         clients.receiver.send(JSON.stringify(relayMessage));
         stats.messagesRelayed++;
         
-        console.log(`🔄 转发关键点: ${clientType} → receiver (${message.pts?.length || 0} 个点)`);
+        console.log(`🔄 转发关键点: ${clientType} → receiver (${message.pts71?.length || message.pts68?.length || 0} 个点)`);
       }
       
       // 处理状态查询

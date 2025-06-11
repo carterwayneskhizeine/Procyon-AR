@@ -249,6 +249,9 @@
                 this.lastSourceFrame = 0;
                 this.lastTargetFrame = 0;
                 
+                // ⏱️ 帧率控制
+                this.lastDeformTime = 0; // 上次形变时间戳
+                
                 this.initializeUI();
                 this.initFaceDeform();
                 this.connectToSource();
@@ -288,6 +291,21 @@
                         // 透明背景，便于与原始画面叠加
                         if (this.webGLContext) {
                             this.webGLContext.clearColor(0, 0, 0, 0);
+                        }
+
+                        // 🎯 剪裁 vertices：仅保留 0-16 下颌外轮廓三角
+                        if (typeof pModel !== 'undefined' && pModel && pModel.path && Array.isArray(pModel.path.vertices)) {
+                            const jawSet = new Set(Array.from({length:17},(_,i)=>i)); // 0-16
+                            this.jawVertices = pModel.path.vertices.filter(v => jawSet.has(v[0]) && jawSet.has(v[1]) && jawSet.has(v[2]));
+                            if (this.jawVertices.length === 0) {
+                                console.warn('⚠️ Jaw vertices 过滤后为空，回退到全部顶点');
+                                this.jawVertices = null;
+                            } else {
+                                console.log(`🎯 Jaw vertices 已生成: ${this.jawVertices.length} 组三角`);
+                            }
+                        } else {
+                            console.warn('⚠️ pModel 未就绪，无法剪裁 vertices');
+                            this.jawVertices = null;
                         }
                     } else {
                         throw new Error('faceDeformer 类未找到');
@@ -359,10 +377,10 @@
                         
                         // 根据不同区域使用不同的收窄系数
                         let factor;
-                        if (index <= 3 || index >= 11) {
+                        if (index <= 4 || index >= 12) {
                             // 脸颊区域 - 更强的收窄
                             factor = 0.6;
-                        } else if (index <= 7) {
+                        } else if (index <= 8) {
                             // 下颌区域 - 中等收窄
                             factor = 0.75;
                         } else {
@@ -473,10 +491,10 @@
                                 
                                 // 根据不同区域使用不同的收窄系数
                                 let factor;
-                                if (index <= 3 || index >= 11) {
+                                if (index <= 4 || index >= 12) {
                                     // 脸颊区域 - 更强的收窄
                                     factor = 0.6;
-                                } else if (index <= 7) {
+                                } else if (index <= 8) {
                                     // 下颌区域 - 中等收窄
                                     factor = 0.75;
                                 } else {
@@ -530,16 +548,20 @@
                         return sourceImage;
                     }
 
-                    // 加载数据到 faceDeformer
-                    this.faceDeformer.load(tempCanvas, sourcePoints, pModel);
+                    // 使用剪裁后的 jawVertices，仅形变外轮廓
+                    this.faceDeformer.load(tempCanvas, sourcePoints, pModel, this.jawVertices || undefined);
                     
                     // 先清空画布，保持透明背景
                     if (this.webGLContext) {
                         this.webGLContext.clear(this.webGLContext.COLOR_BUFFER_BIT);
                     }
 
-                    // 执行形变绘制
-                    this.faceDeformer.draw(interpolatedPoints);
+                    // ⏱️ 帧率丢帧逻辑：限制到 ~20 FPS (>=50ms)
+                    const now = performance.now();
+                    if (now - this.lastDeformTime >= 50) {
+                        this.faceDeformer.draw(interpolatedPoints);
+                        this.lastDeformTime = now;
+                    }
                     
                     return this.deformCanvas;
                     
