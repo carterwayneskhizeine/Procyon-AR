@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simple Face Points Mapping Test</title>
+  <style>
+    body { margin: 0; display: flex; flex-direction: column; align-items: center; background:#111;color:#fff;font-family:Arial; padding: 20px;}
+    #video { display:block; width:640px; transform: scaleX(-1); border: 2px solid #333; }
+    #overlay { position:absolute; left:50%; top:50%; transform: translate(-50%, -50%); pointer-events: none; }
+    #controls { margin: 20px 0; }
+    .button { background: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+    #log { font-size:14px; margin-top:10px; color: #ddd; max-width: 800px; }
+    .status { margin: 10px 0; }
+    .error { color: #ff6666; }
+    .success { color: #66ff66; }
+  </style>
+</head>
+<body>
+  <h2>🛠️ Simple Prototype: Face Points Mapping Test</h2>
+  <div style="position: relative; display: inline-block;">
+    <video id="video" width="640" height="480" autoplay muted playsinline></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+  </div>
+  
+  <div id="controls">
+    <button class="button" onclick="startMapping()">开始检测</button>
+    <button class="button" onclick="showMapping()">显示映射对照</button>
+    <button class="button" onclick="clearOverlay()">清除画布</button>
+  </div>
+  
+  <div id="log">
+    <div class="status">等待初始化...</div>
+  </div>
+
+  <!-- 只加载必要的库 -->
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  
+  <script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    const logDiv = document.getElementById('log');
+    
+    let isRunning = false;
+    let currentPoints68 = null;
+    let currentPoints71 = null;
+
+    function log(message, type = 'info') {
+      const div = document.createElement('div');
+      div.className = `status ${type}`;
+      div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+      logDiv.appendChild(div);
+      logDiv.scrollTop = logDiv.scrollHeight;
+      console.log(message);
+    }
+
+    // 68 ➜ 71 映射表 (修正版)
+    const mapping68to71 = {
+      // 下颌轮廓 0-14 → 0-14 (dlib 17点 → clm 15点，需要压缩)
+      0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8,
+      9: 9, 10: 10, 11: 11, 12: 12, 13: 13, 14: 14,
+      // 但 dlib 有16个点 (0-16)，clm只有15个 (0-14)，所以压缩映射：
+      15: 14, 16: 14, // 重复最后一个点
+      
+      // 右眉 15-18 ← dlib 17-21 (5点→4点)
+      15: 17, 16: 18, 17: 19, 18: 21, // 跳过 dlib-20
+      
+      // 左眉 19-22 ← dlib 22-26 (5点→4点) 
+      19: 22, 20: 23, 21: 24, 22: 26, // 跳过 dlib-25
+      
+      // 左眼外圈 23-26
+      23: 36, 24: 37, 25: 39, 26: 40,
+      
+      // 右眼外圈 28-31 
+      28: 42, 29: 44, 30: 43, 31: 47,
+      
+      // 鼻子区域
+      33: 27, // 鼻根
+      34: 31, 35: 32, 36: 33, // 鼻翼左
+      37: 30, // 鼻尖下方
+      38: 35, 39: 34, 40: 35, // 鼻翼右，顺序调整
+      42: 31, 43: 35, // 鼻孔角落
+      62: 30, // 鼻尖上方
+      
+      // 嘴巴外轮廓 44-55
+      44: 48, 45: 49, 46: 50, 47: 51, 48: 52, 49: 53,
+      50: 54, 51: 55, 52: 56, 53: 57, 54: 58, 55: 59,
+      
+      // 嘴巴内轮廓 56-61
+      56: 60, 57: 62, 58: 64, 59: 67, 60: 61, 61: 63,
+      
+      // 左眼下方额外点 63-66
+      63: 37, 64: 38, 65: 41, 66: 40,
+      
+      // 右眼下方额外点 67-70  
+      67: 44, 68: 43, 69: 46, 70: 47
+    };
+
+    function convert68to71(pts68) {
+      const pts71 = new Array(71);
+      
+      // 使用映射表填充
+      for (let clmIdx = 0; clmIdx < 71; clmIdx++) {
+        const dlibIdx = mapping68to71[clmIdx];
+        if (dlibIdx !== undefined && pts68[dlibIdx]) {
+          pts71[clmIdx] = [pts68[dlibIdx].x, pts68[dlibIdx].y];
+        }
+      }
+      
+      // 计算特殊点：眼中心和鼻梁中点
+      if (pts68.length >= 48) {
+        // 左眼中心 (27)
+        const leftEye = pts68.slice(36, 42);
+        const leftCenter = leftEye.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+        pts71[27] = [leftCenter.x / leftEye.length, leftCenter.y / leftEye.length];
+        
+        // 右眼中心 (32)
+        const rightEye = pts68.slice(42, 48);
+        const rightCenter = rightEye.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+        pts71[32] = [rightCenter.x / rightEye.length, rightCenter.y / rightEye.length];
+        
+        // 鼻梁中点 (41)
+        if (pts68[28] && pts68[29]) {
+          pts71[41] = [(pts68[28].x + pts68[29].x) / 2, (pts68[28].y + pts68[29].y) / 2];
+        }
+      }
+      
+      // 填充未定义的点（使用第一个点作为默认值）
+      for (let i = 0; i < 71; i++) {
+        if (!pts71[i] && pts68[0]) {
+          pts71[i] = [pts68[0].x, pts68[0].y];
+        }
+      }
+      
+      return pts71;
+    }
+
+    function drawPoints(points, color, size = 3, label = '') {
+      ctx.fillStyle = color;
+      points.forEach((point, index) => {
+        if (point && typeof point[0] === 'number' && typeof point[1] === 'number') {
+          // 水平镜像 x 坐标
+          const mirroredX = overlay.width - point[0];
+          const y = point[1];
+          
+          ctx.beginPath();
+          ctx.arc(mirroredX, y, size, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // 显示点序号
+          if (label) {
+            ctx.fillStyle = 'white';
+            ctx.font = '10px Arial';
+            ctx.fillText(`${label}${index}`, mirroredX + 5, y - 5);
+            ctx.fillStyle = color;
+          }
+        }
+      });
+    }
+
+    function clearOverlay() {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+    }
+
+    function showMapping() {
+      if (currentPoints68 && currentPoints71) {
+        clearOverlay();
+        drawPoints(currentPoints68.map(p => [p.x, p.y]), '#00ff00', 2, 'D'); // dlib绿色
+        drawPoints(currentPoints71, '#ff0000', 2, 'C'); // clm红色
+        
+        log(`显示映射对照：绿色=dlib68点，红色=clm71点`, 'info');
+      } else {
+        log('没有检测到人脸点位', 'error');
+      }
+    }
+
+    async function initFaceAPI() {
+      try {
+        log('正在加载 face-api.js 模型...', 'info');
+        
+        // 尝试本地模型，失败则使用CDN
+        try {
+          await faceapi.nets.tinyFaceDetector.loadFromUri('../models');
+          await faceapi.nets.faceLandmark68TinyNet.loadFromUri('../models');
+          log('本地模型加载成功', 'success');
+        } catch (localError) {
+          log('本地模型加载失败，使用CDN模型...', 'info');
+          const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
+          await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+          await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+          log('CDN模型加载成功', 'success');
+        }
+        
+        return true;
+      } catch (error) {
+        log(`模型加载失败: ${error.message}`, 'error');
+        return false;
+      }
+    }
+
+    async function initWebcam() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480 }
+        });
+        video.srcObject = stream;
+        await new Promise(resolve => video.onloadedmetadata = resolve);
+        log('摄像头初始化成功', 'success');
+        return true;
+      } catch (error) {
+        log(`摄像头初始化失败: ${error.message}`, 'error');
+        return false;
+      }
+    }
+
+    async function detectAndMap() {
+      if (!isRunning) return;
+      
+      try {
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({
+          inputSize: 256,
+          scoreThreshold: 0.3
+        })).withFaceLandmarks(true);
+
+        clearOverlay();
+        
+        if (detection) {
+          currentPoints68 = detection.landmarks.positions;
+          currentPoints71 = convert68to71(currentPoints68);
+          
+          // 绘制dlib 68点（绿色）
+          drawPoints(currentPoints68.map(p => [p.x, p.y]), '#00ff00', 2);
+          
+          // 绘制clm 71点（红色小点）
+          drawPoints(currentPoints71, '#ff0000', 1);
+          
+          // 显示统计信息
+          const confidence = detection.detection.score.toFixed(3);
+          ctx.fillStyle = 'yellow';
+          ctx.font = '16px Arial';
+          ctx.fillText(`检测置信度: ${confidence}`, 10, 30);
+          ctx.fillText(`dlib68点: ${currentPoints68.length}`, 10, 50);
+          ctx.fillText(`clm71点: ${currentPoints71.length}`, 10, 70);
+        } else {
+          ctx.fillStyle = 'red';
+          ctx.font = '16px Arial';
+          ctx.fillText('未检测到人脸', 10, 30);
+        }
+      } catch (error) {
+        log(`检测错误: ${error.message}`, 'error');
+      }
+      
+      requestAnimationFrame(detectAndMap);
+    }
+
+    async function startMapping() {
+      if (isRunning) {
+        isRunning = false;
+        log('停止检测', 'info');
+        return;
+      }
+      
+      log('开始初始化...', 'info');
+      
+      const webcamOK = await initWebcam();
+      if (!webcamOK) return;
+      
+      const faceAPIReady = await initFaceAPI();
+      if (!faceAPIReady) return;
+      
+      isRunning = true;
+      log('开始实时检测和映射', 'success');
+      detectAndMap();
+    }
+
+    // 页面加载完成后的初始化
+    window.addEventListener('load', () => {
+      log('页面加载完成，点击"开始检测"按钮启动', 'success');
+    });
+  </script>
+</body>
+</html> 
