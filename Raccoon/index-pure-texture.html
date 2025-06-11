@@ -6,64 +6,15 @@
       import * as THREE from 'three';
       import { MindARThree } from '../src/face-target/three.js';
       import * as faceapi from 'face-api.js';
+      import { OneEuroFilter } from '1eurofilter';
       
       // 🎯 面部识别相关变量 (face-api.js)
       let trackingStarted = false;
       let faceDetectorOptions = null; // TinyFaceDetector 配置
       let currentLandmarks = null;    // 平滑后的关键点
+      let landmarkFilters = null;    // 1€ 滤波器数组
       let facePointsCanvas = null;
       let facePointsCtx = null;
-      
-      // 🎯 1€ 滤波器实现 - 专为低延迟交互设计
-      class OneEuroFilter {
-        constructor(freq, minCutoff = 1.0, beta = 0.0, dCutoff = 1.0) {
-          this.freq = freq;
-          this.minCutoff = minCutoff;
-          this.beta = beta;
-          this.dCutoff = dCutoff;
-          this.x = null;
-          this.dx = null;
-          this._alpha = (dt, cutoff) => 1.0 / (1.0 + (1.0 / (2.0 * Math.PI * cutoff * dt)));
-        }
-        
-        filter(x, dt = 1.0 / 30.0) {
-          if (this.x === null) {
-            this.x = x;
-            this.dx = 0;
-            return x;
-          }
-          
-          const dx = (x - this.x) / dt;
-          const edx = this._alpha(dt, this.dCutoff) * dx + (1 - this._alpha(dt, this.dCutoff)) * this.dx;
-          
-          const cutoff = this.minCutoff + this.beta * Math.abs(edx);
-          const ex = this._alpha(dt, cutoff) * x + (1 - this._alpha(dt, cutoff)) * this.x;
-          
-          this.x = ex;
-          this.dx = edx;
-          return ex;
-        }
-      }
-      
-      // 🎯 为每个关键点创建2D滤波器
-      let landmarkFilters = null;
-      const initLandmarkFilters = (numPoints = 68) => {
-        landmarkFilters = Array.from({ length: numPoints }, () => ({
-          x: new OneEuroFilter(30, 1.2, 0.04, 1.0), // freq=30fps, minCutoff=1.2(更稳), beta=0.04(响应速度)
-          y: new OneEuroFilter(30, 1.2, 0.04, 1.0)
-        }));
-      };
-      
-      // 🎯 优化检测策略：不是每帧都检测
-      let detectionCounter = 0;
-      let lastDetectionTime = 0;
-      let detectionInterval = 2; // 每2帧检测一次，减少计算负担
-      let lastValidLandmarks = null;
-      
-      // 🎯 性能监控变量
-      let lastFrameTime = performance.now();
-      let frameCount = 0;
-      let avgFPS = 30;
       
       // 🎨 共享调色板配置管理
       const ColorPaletteManager = {
@@ -203,6 +154,30 @@
          return true;
        };
       
+      // 🎯 初始化 1€ 滤波器（68个关键点 × 2坐标 = 136个滤波器）
+      const initLandmarkFilters = () => {
+        console.log('🔧 初始化 1€ 滤波器...');
+        
+        // 1€ 滤波器参数：平衡平滑性和延迟
+        const filterParams = {
+          freq: 30,        // 估计帧率 30fps
+          mincutoff: 1.0,  // 最小截止频率：1.0Hz = 强平滑
+          beta: 0.04,      // 速度响应系数：0.04 = 低延迟
+          dcutoff: 1.0     // 导数滤波截止频率
+        };
+        
+        landmarkFilters = [];
+        // 为68个关键点的x、y坐标各创建滤波器
+        for (let i = 0; i < 68; i++) {
+          landmarkFilters.push({
+            x: new OneEuroFilter(filterParams.freq, filterParams.mincutoff, filterParams.beta, filterParams.dcutoff),
+            y: new OneEuroFilter(filterParams.freq, filterParams.mincutoff, filterParams.beta, filterParams.dcutoff)
+          });
+        }
+        
+        console.log('✅ 1€ 滤波器初始化完成：68个关键点 × 2坐标 = 136个滤波器');
+      };
+      
       // 🎯 开始面部跟踪
       const startFaceTracking = (videoElement) => {
         if (!videoElement || !faceDetectorOptions) {
@@ -301,10 +276,7 @@
                          <div style="margin-bottom: 10px; padding: 8px; background: #333; border-radius: 4px;">
                <div style="color: #00FF00; font-weight: bold; margin-bottom: 5px;">🎯 面部识别状态</div>
                <div id="faceTrackingStatus" style="color: #888;">初始化中...</div>
-               <div style="font-size: 10px; color: #666; margin-top: 3px;">face-api.js 面部检测</div>
-               <div id="performanceInfo" style="font-size: 9px; color: #999; margin-top: 3px;">
-                 检测间隔: -- | 滤波状态: --
-               </div>
+               <div style="font-size: 10px; color: #666; margin-top: 3px;">face-api.js + 1€滤波器 (低延迟抗抖动)</div>
              </div>
             
             <div style="margin-bottom: 10px;">
@@ -354,30 +326,6 @@
               <input type="range" id="blueSlider" min="0" max="255" value="${savedConfig.blueValue}" style="width: 100%;">
             </div>
             
-            <div style="margin-top: 10px; padding: 8px; background: #444; border-radius: 4px;">
-              <div style="color: #FFD700; font-weight: bold; margin-bottom: 5px;">🎛️ 抖动控制 (1€滤波)</div>
-              
-              <div style="margin-bottom: 6px;">
-                <label style="display: block; margin-bottom: 2px; font-size: 10px;">平滑强度: <span id="minCutoffValue">1.2</span></label>
-                <input type="range" id="minCutoffSlider" min="0.5" max="3.0" step="0.1" value="1.2" style="width: 100%;">
-              </div>
-              
-              <div style="margin-bottom: 6px;">
-                <label style="display: block; margin-bottom: 2px; font-size: 10px;">响应速度: <span id="betaValue">0.04</span></label>
-                <input type="range" id="betaSlider" min="0.01" max="0.1" step="0.01" value="0.04" style="width: 100%;">
-              </div>
-              
-              <div style="margin-bottom: 6px;">
-                <label style="display: block; margin-bottom: 2px; font-size: 10px;">检测频率: <span id="detectionFreqValue">自适应</span></label>
-                <select id="detectionFreqSelect" style="width: 100%; padding: 2px; background: #333; color: white; border: 1px solid #555; font-size: 10px;">
-                  <option value="adaptive">自适应 (推荐)</option>
-                  <option value="1">每帧检测 (高精度)</option>
-                  <option value="2">每2帧检测</option>
-                  <option value="3">每3帧检测 (省性能)</option>
-                </select>
-              </div>
-            </div>
-            
             <div style="background: #333; padding: 8px; border-radius: 4px; text-align: center;">
               <div id="colorPreview" style="width: 100%; height: 20px; border-radius: 3px; margin-bottom: 5px;"></div>
               <span id="colorHex"></span>
@@ -391,9 +339,31 @@
             <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
               配置自动同步到Mesh版本<br/>
               🎭 透明度遮罩 + 半透明 | ShaderMaterial<br/>
-              🎯 face-api.js + 1€滤波 + 智能检测频率<br/>
-              🎛️ 实时调参 | 🚀 低延迟优化
+              🎯 face-api.js + 1€滤波器 + 面部轮廓
             </div>
+
+            <details style="margin-top: 8px;">
+              <summary style="cursor: pointer; color: #FFD700; font-size: 11px;">🔧 1€滤波器参数调节</summary>
+              <div style="margin-top: 5px; font-size: 10px;">
+                <div style="margin-bottom: 5px;">
+                  <label>MinCutoff (平滑度): <span id="minCutoffValue">1.0</span></label>
+                  <input type="range" id="minCutoffSlider" min="0.1" max="2.0" step="0.1" value="1.0" style="width: 100%;">
+                </div>
+                <div style="margin-bottom: 5px;">
+                  <label>Beta (响应速度): <span id="betaValue">0.04</span></label>
+                  <input type="range" id="betaSlider" min="0.01" max="0.2" step="0.01" value="0.04" style="width: 100%;">
+                </div>
+                <div style="color: #666; font-size: 9px;">
+                  MinCutoff↓=更平滑但延迟↑<br/>
+                  Beta↑=跟随更快但可能抖动↑
+                </div>
+                <div style="margin-top: 8px; text-align: center;">
+                  <button id="smoothPreset" style="background: #555; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; margin-right: 3px; font-size: 9px;">平滑优先</button>
+                  <button id="balancedPreset" style="background: #555; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; margin-right: 3px; font-size: 9px;">平衡模式</button>
+                  <button id="responsivePreset" style="background: #555; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; font-size: 9px;">响应优先</button>
+                </div>
+              </div>
+            </details>
           </div>
         `;
         document.body.appendChild(controlPanel);
@@ -515,46 +485,70 @@
         // 初始化显示
         updateColor();
         
-        // 🎯 滤波器参数控制
+        // 🔧 1€滤波器参数控制
         const minCutoffSlider = document.getElementById('minCutoffSlider');
         const betaSlider = document.getElementById('betaSlider');
-        const detectionFreqSelect = document.getElementById('detectionFreqSelect');
+        const minCutoffValue = document.getElementById('minCutoffValue');
+        const betaValue = document.getElementById('betaValue');
         
-        // 滤波器参数更新
-        const updateFilterParams = () => {
-          const minCutoff = parseFloat(minCutoffSlider.value);
-          const beta = parseFloat(betaSlider.value);
+        if (minCutoffSlider && betaSlider) {
+          minCutoffSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            minCutoffValue.textContent = value.toFixed(1);
+            // 更新所有滤波器的 minCutoff 参数
+            if (landmarkFilters) {
+              landmarkFilters.forEach(filter => {
+                filter.x.setMinCutoff(value);
+                filter.y.setMinCutoff(value);
+              });
+            }
+          });
           
-          // 更新显示
-          document.getElementById('minCutoffValue').textContent = minCutoff;
-          document.getElementById('betaValue').textContent = beta;
-          
-          // 重新初始化滤波器
-          if (landmarkFilters) {
-            landmarkFilters.forEach(filter => {
-              filter.x.minCutoff = minCutoff;
-              filter.x.beta = beta;
-              filter.y.minCutoff = minCutoff;
-              filter.y.beta = beta;
-            });
+          betaSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            betaValue.textContent = value.toFixed(2);
+            // 更新所有滤波器的 beta 参数
+            if (landmarkFilters) {
+              landmarkFilters.forEach(filter => {
+                filter.x.setBeta(value);
+                filter.y.setBeta(value);
+              });
+            }
+          });
+        }
+        
+        // 🎯 预设按钮事件处理
+        const smoothPreset = document.getElementById('smoothPreset');
+        const balancedPreset = document.getElementById('balancedPreset');
+        const responsivePreset = document.getElementById('responsivePreset');
+        
+        const applyPreset = (minCutoff, beta) => {
+          if (minCutoffSlider && betaSlider) {
+            minCutoffSlider.value = minCutoff;
+            betaSlider.value = beta;
+            minCutoffValue.textContent = minCutoff.toFixed(1);
+            betaValue.textContent = beta.toFixed(2);
+            
+            if (landmarkFilters) {
+              landmarkFilters.forEach(filter => {
+                filter.x.setMinCutoff(minCutoff);
+                filter.x.setBeta(beta);
+                filter.y.setMinCutoff(minCutoff);
+                filter.y.setBeta(beta);
+              });
+            }
           }
         };
         
-        minCutoffSlider.addEventListener('input', updateFilterParams);
-        betaSlider.addEventListener('input', updateFilterParams);
-        
-        // 检测频率控制
-        detectionFreqSelect.addEventListener('change', (e) => {
-          const value = e.target.value;
-          if (value === 'adaptive') {
-            document.getElementById('detectionFreqValue').textContent = '自适应';
-            // 恢复自适应模式（在渲染循环中动态调整）
-          } else {
-            const freq = parseInt(value);
-            detectionInterval = freq;
-            document.getElementById('detectionFreqValue').textContent = `每${freq}帧`;
-          }
-        });
+        if (smoothPreset) {
+          smoothPreset.addEventListener('click', () => applyPreset(0.5, 0.02)); // 强平滑，低响应
+        }
+        if (balancedPreset) {
+          balancedPreset.addEventListener('click', () => applyPreset(1.0, 0.04)); // 默认平衡
+        }
+        if (responsivePreset) {
+          responsivePreset.addEventListener('click', () => applyPreset(1.5, 0.08)); // 弱平滑，高响应
+        }
       };
       
       // 🎯 更新面部识别状态显示
@@ -562,14 +556,6 @@
         const statusElement = document.getElementById('faceTrackingStatus');
         if (statusElement) {
           statusElement.textContent = status;
-        }
-      };
-      
-      // 🎯 更新性能信息显示
-      const updatePerformanceInfo = (interval, filterActive, fps) => {
-        const perfElement = document.getElementById('performanceInfo');
-        if (perfElement) {
-          perfElement.textContent = `检测间隔: ${interval}帧 | 滤波: ${filterActive ? '✅' : '❌'} | 估计FPS: ${Math.round(fps)}`;
         }
       };
       
@@ -888,9 +874,12 @@
             // 调整面部点位画布尺寸
             adjustFacePointsCanvas(mindarThree.video);
             
+            // 初始化1€滤波器
+            initLandmarkFilters();
+            
             const started = startFaceTracking(mindarThree.video);
             if (started) {
-              updateFaceTrackingStatus('✅ 面部识别已启动');
+              updateFaceTrackingStatus('✅ 面部识别已启动 (1€滤波器)');
             } else {
               updateFaceTrackingStatus('❌ 面部识别启动失败');
             }
@@ -926,81 +915,29 @@
             applyColorToFaceMesh(faceMesh, customColor, colorIntensity, colorMode);
           }
           
-          // 🎯 性能监控
-          const frameTime = performance.now();
-          
-          frameCount++;
-          if (frameCount % 30 === 0) { // 每30帧更新一次FPS
-            const deltaFrame = frameTime - lastFrameTime;
-            avgFPS = 30000 / deltaFrame; // 30帧的平均FPS
-            lastFrameTime = frameTime;
-            
-            // 更新性能信息显示
-            updatePerformanceInfo(
-              detectionInterval, 
-              landmarkFilters !== null, 
-              avgFPS
-            );
-          }
-          
-          // 🎯 关键点检测与绘制
+          // 🎯 关键点检测与绘制 (使用1€滤波器)
           if (trackingStarted && mindarThree.video.readyState >= 2) {
-            detectionCounter++;
-            const currentTime = performance.now();
-            const deltaTime = (currentTime - lastDetectionTime) / 1000; // 转换为秒
-            
-            // 🎯 智能检测：根据运动状态调整检测频率
-            const shouldDetect = detectionCounter % detectionInterval === 0 || !lastValidLandmarks;
-            
-            if (shouldDetect) {
-              const detection = await faceapi.detectSingleFace(mindarThree.video, faceDetectorOptions).withFaceLandmarks(true);
+            const detection = await faceapi.detectSingleFace(mindarThree.video, faceDetectorOptions).withFaceLandmarks(true);
+            if (detection && detection.landmarks) {
+              const landmarks = detection.landmarks.positions;
               
-              if (detection && detection.landmarks) {
-                const rawLandmarks = detection.landmarks.positions;
-                lastValidLandmarks = rawLandmarks;
-                lastDetectionTime = currentTime;
-                
-                // 初始化滤波器（首次检测）
+              // 获取当前时间戳（秒）
+              const timestamp = performance.now() / 1000;
+              
+              if (!currentLandmarks || !landmarkFilters) {
+                // 首次检测：直接设置并初始化滤波器
+                currentLandmarks = landmarks.map(pt => ({ x: pt.x, y: pt.y }));
                 if (!landmarkFilters) {
-                  initLandmarkFilters(rawLandmarks.length);
-                  currentLandmarks = rawLandmarks.map(pt => ({ x: pt.x, y: pt.y }));
-                } else {
-                  // 🎯 应用1€滤波器
-                  currentLandmarks = rawLandmarks.map((pt, i) => ({
-                    x: landmarkFilters[i].x.filter(pt.x, deltaTime || 1/30),
-                    y: landmarkFilters[i].y.filter(pt.y, deltaTime || 1/30)
-                  }));
+                  initLandmarkFilters();
                 }
-                
-                // 🎯 动态调整检测频率：如果变化大，增加检测频率
-                if (currentLandmarks && lastValidLandmarks) {
-                  let maxMovement = 0;
-                  for (let i = 0; i < Math.min(currentLandmarks.length, rawLandmarks.length); i++) {
-                    const movement = Math.sqrt(
-                      Math.pow(currentLandmarks[i].x - rawLandmarks[i].x, 2) +
-                      Math.pow(currentLandmarks[i].y - rawLandmarks[i].y, 2)
-                    );
-                    maxMovement = Math.max(maxMovement, movement);
-                  }
-                  
-                  // 运动大时每帧检测，运动小时降低频率
-                  detectionInterval = maxMovement > 5 ? 1 : (maxMovement > 2 ? 2 : 3);
+              } else {
+                // 使用 1€ 滤波器平滑每个关键点
+                for (let i = 0; i < landmarks.length && i < landmarkFilters.length; i++) {
+                  currentLandmarks[i].x = landmarkFilters[i].x.filter(landmarks[i].x, timestamp);
+                  currentLandmarks[i].y = landmarkFilters[i].y.filter(landmarks[i].y, timestamp);
                 }
-              } else if (lastValidLandmarks && currentLandmarks) {
-                // 🎯 检测失败时，保持上一帧的滤波结果，避免突然消失
-                console.warn('⚠️ 当前帧检测失败，保持上一帧结果');
-              }
-            } else {
-              // 🎯 跳帧时，使用预测或插值保持平滑
-              if (currentLandmarks && deltaTime > 0) {
-                // 轻微的预测性移动，基于历史运动趋势
-                currentLandmarks = currentLandmarks.map((pt, i) => ({
-                  x: landmarkFilters[i].x.filter(pt.x, deltaTime),
-                  y: landmarkFilters[i].y.filter(pt.y, deltaTime)
-                }));
               }
             }
-            
             drawFacePoints();
           }
           

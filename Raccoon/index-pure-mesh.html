@@ -2,25 +2,33 @@
 
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- 🎯 添加 clmtrackr 相关脚本 -->
-  <script src="../clmtrackr/examples/js/libs/utils.js"></script>
-  <script src="../clmtrackr/build/clmtrackr.js"></script>
-  <script src="../clmtrackr/examples/js/libs/Stats.js"></script>
+  <!-- 🎯 face-api.js 用于 3D 模型面部识别 -->
   
   <script type="module">
     import * as THREE from 'three';
     import { MindARThree } from "../src/face-target/three.js";
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import * as faceapi from 'face-api.js';
+    import { OneEuroFilter } from '1eurofilter';
     
     // 🎯 面部识别相关变量 - 用于识别3D模型
-    let ctrack = null;
     let trackingStarted = false;
-    let facePoints = [];
+    let faceDetectorOptions = null; // TinyFaceDetector 配置
+    let currentLandmarks = null;    // 平滑后的关键点
+    let landmarkFilters = null;    // 1€ 滤波器数组
     let facePointsCanvas = null;
     let facePointsCtx = null;
-    let stats = null;
     let modelRenderCanvas = null; // 用于捕获3D模型渲染结果的画布
     let modelRenderCtx = null;
+    
+    // 🎯 识别性能统计
+    let detectionStats = {
+      totalAttempts: 0,
+      successfulDetections: 0,
+      lastDetectionTime: 0,
+      avgConfidence: 0,
+      confidenceSum: 0
+    };
 
     // GPU信息检测和显示（和three-facemesh.html一样）
     const checkGPUInfo = async () => {
@@ -86,25 +94,54 @@
       updateFPS();
     };
 
-    // 🎯 初始化面部识别系统 - 用于识别3D模型
-    const initFaceTracking = () => {
-      console.log('🎯 初始化3D模型面部识别系统...');
-      
-      // 初始化 clmtrackr
-      if (typeof clm !== 'undefined') {
-        ctrack = new clm.tracker();
-        ctrack.init();
-        console.log('✅ clmtrackr 初始化成功 (用于3D模型识别)');
-      } else {
-        console.error('❌ clmtrackr 库未加载');
+    // 🎯 初始化面部识别系统 - 用于识别3D模型 (face-api.js)
+    const initFaceTracking = async () => {
+      console.log('🎯 初始化3D模型面部识别系统 (face-api.js)...');
+
+      try {
+        // 🎯 优先尝试本地模型，失败时使用 CDN
+        let modelLoaded = false;
+        
+        try {
+          console.log('📦 尝试加载本地模型...');
+          await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri('./models'),
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri('./models')
+          ]);
+          modelLoaded = true;
+          console.log('✅ 本地模型加载成功');
+        } catch (localError) {
+          console.warn('⚠️ 本地模型加载失败，尝试CDN模型:', localError.message);
+          
+          const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
+          await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL)
+          ]);
+          modelLoaded = true;
+          console.log('✅ CDN模型加载成功');
+        }
+        
+        // 🎯 优化 face-api.js 参数，专门用于识别 3D 模型
+        faceDetectorOptions = new faceapi.TinyFaceDetectorOptions({ 
+          inputSize: 256,        // 提高输入尺寸，增加识别精度
+          scoreThreshold: 0.3    // 降低阈值，提高检测敏感度
+        });
+        console.log('✅ face-api.js 模型加载完成 (专门识别3D模型，<inputSize:256>, <scoreThreshold:0.3>)');
+      } catch (error) {
+        console.error('❌ face-api.js 模型加载失败:', error);
         return false;
       }
       
-      // 创建用于捕获3D模型渲染结果的画布
+      // 创建用于捕获3D模型渲染结果的画布 - 16:9比例匹配摄像机
       modelRenderCanvas = document.createElement('canvas');
-      modelRenderCanvas.width = 640; // 固定尺寸用于识别
-      modelRenderCanvas.height = 480;
+      modelRenderCanvas.width = 640;  // 16:9比例，与摄像机输入匹配
+      modelRenderCanvas.height = 360; // 640/360 = 16:9
       modelRenderCtx = modelRenderCanvas.getContext('2d');
+      
+      // 🎯 提高画布渲染质量
+      modelRenderCtx.imageSmoothingEnabled = true;
+      modelRenderCtx.imageSmoothingQuality = 'high';
       
       // 创建面部点位绘制画布覆盖层
       facePointsCanvas = document.createElement('canvas');
@@ -121,54 +158,60 @@
       if (container) {
         container.appendChild(facePointsCanvas);
         
-        // 🔍 可选：添加调试用的渲染画布显示（用于查看clmtrackr的输入）
+        // 🔍 调试用的渲染画布显示（用于查看face-api.js的输入）- 16:9比例
         modelRenderCanvas.style.position = 'absolute';
         modelRenderCanvas.style.top = '10px';
         modelRenderCanvas.style.left = '10px';
-        modelRenderCanvas.style.width = '160px';
-        modelRenderCanvas.style.height = '120px';
-        modelRenderCanvas.style.border = '2px solid #00FF00';
+        modelRenderCanvas.style.width = '240px';  // 16:9比例显示
+        modelRenderCanvas.style.height = '135px'; // 240/135 = 16:9
+        modelRenderCanvas.style.border = '3px solid #00FF00';
+        modelRenderCanvas.style.borderRadius = '8px';
         modelRenderCanvas.style.zIndex = '999';
-        modelRenderCanvas.style.opacity = '0.8';
-        modelRenderCanvas.title = '3D模型识别输入画面';
+        modelRenderCanvas.style.opacity = '0.9';
+        modelRenderCanvas.style.boxShadow = '0 0 10px rgba(0,255,0,0.5)';
+        modelRenderCanvas.title = '3D模型识别输入画面 (face-api.js) - 16:9比例';
         container.appendChild(modelRenderCanvas);
       }
       
-      // 初始化统计信息
-      if (typeof Stats !== 'undefined') {
-        stats = new Stats();
-        stats.domElement.style.position = 'absolute';
-        stats.domElement.style.top = '0px';
-        stats.domElement.style.right = '280px'; // 避免与控制面板重叠
-        stats.domElement.style.zIndex = '1002';
-        container.appendChild(stats.domElement);
-        
-        // 监听 clmtrackr 迭代事件
-        document.addEventListener('clmtrackrIteration', function(event) {
-          stats.update();
-        }, false);
-      }
+      // 🎯 性能监控已移除（使用浏览器开发者工具代替）
+      console.log('📊 性能监控：请使用浏览器开发者工具 > Performance 标签');
       
       return true;
     };
     
-    // 🎯 开始3D模型面部跟踪
-    const startFaceTracking = () => {
-      if (!ctrack || !modelRenderCanvas) {
-        console.warn('⚠️ 3D模型面部跟踪初始化失败');
-        return false;
+    // 🎯 初始化 1€ 滤波器（68个关键点 × 2坐标 = 136个滤波器）
+    const initLandmarkFilters = () => {
+      console.log('🔧 初始化 1€ 滤波器 (3D模型识别)...');
+      
+      // 1€ 滤波器参数：平衡平滑性和延迟
+      const filterParams = {
+        freq: 30,        // 估计帧率 30fps
+        mincutoff: 1.0,  // 最小截止频率：1.0Hz = 强平滑
+        beta: 0.04,      // 速度响应系数：0.04 = 低延迟
+        dcutoff: 1.0     // 导数滤波截止频率
+      };
+      
+      landmarkFilters = [];
+      // 为68个关键点的x、y坐标各创建滤波器
+      for (let i = 0; i < 68; i++) {
+        landmarkFilters.push({
+          x: new OneEuroFilter(filterParams.freq, filterParams.mincutoff, filterParams.beta, filterParams.dcutoff),
+          y: new OneEuroFilter(filterParams.freq, filterParams.mincutoff, filterParams.beta, filterParams.dcutoff)
+        });
       }
       
-      try {
-        // 使用3D模型渲染画布作为输入源
-        ctrack.start(modelRenderCanvas);
-        trackingStarted = true;
-        console.log('✅ 3D模型面部跟踪已启动');
-        return true;
-      } catch (error) {
-        console.error('❌ 启动3D模型面部跟踪失败:', error);
+      console.log('✅ 1€ 滤波器初始化完成：68个关键点 × 2坐标 = 136个滤波器 (3D模型识别)');
+    };
+    
+    // 🎯 开始3D模型面部跟踪
+    const startFaceTracking = () => {
+      if (!modelRenderCanvas || !faceDetectorOptions) {
+        console.warn('⚠️ face-api.js 未就绪');
         return false;
       }
+      trackingStarted = true;
+      console.log('✅ 3D模型面部检测已启动 (face-api.js)');
+      return true;
     };
     
     // 🎯 调整面部点位画布尺寸和缩放比例 - 用于3D模型识别
@@ -220,14 +263,58 @@
       }
     };
     
-    // 🎯 捕获3D模型渲染结果并进行面部识别
+    // 🎯 捕获3D模型渲染结果并进行面部识别 - 优化版本
     const captureAndAnalyze3DModel = (renderer) => {
       if (!modelRenderCtx || !renderer) return;
       
       try {
         // 从Three.js渲染器获取画面并绘制到识别画布
         const threeCanvas = renderer.domElement;
-        modelRenderCtx.drawImage(threeCanvas, 0, 0, modelRenderCanvas.width, modelRenderCanvas.height);
+        
+        // 🎯 清除画布并设置背景色，提高对比度
+        modelRenderCtx.fillStyle = '#000000'; // 黑色背景  
+        modelRenderCtx.fillRect(0, 0, modelRenderCanvas.width, modelRenderCanvas.height);
+        
+        // 🎯 计算正确的比例映射，避免压缩变形
+        const targetRatio = modelRenderCanvas.width / modelRenderCanvas.height; // 16:9 = 1.778
+        const sourceRatio = threeCanvas.width / threeCanvas.height;
+        
+        let drawWidth, drawHeight, drawX, drawY;
+        
+        if (sourceRatio > targetRatio) {
+          // 源画布更宽，按高度缩放，水平居中
+          drawHeight = modelRenderCanvas.height;
+          drawWidth = drawHeight * sourceRatio;
+          drawX = (modelRenderCanvas.width - drawWidth) / 2;
+          drawY = 0;
+        } else {
+          // 源画布更高，按宽度缩放，垂直居中
+          drawWidth = modelRenderCanvas.width;
+          drawHeight = drawWidth / sourceRatio;
+          drawX = 0;
+          drawY = (modelRenderCanvas.height - drawHeight) / 2;
+        }
+        
+        // 按正确比例绘制到识别画布
+        modelRenderCtx.drawImage(threeCanvas, drawX, drawY, drawWidth, drawHeight);
+        
+        // 🎯 增强对比度和清晰度
+        const imageData = modelRenderCtx.getImageData(0, 0, modelRenderCanvas.width, modelRenderCanvas.height);
+        const data = imageData.data;
+        
+        // 简单的对比度增强
+        const contrast = 1.2; // 对比度增强系数
+        const brightness = 10; // 亮度增强
+        
+        for (let i = 0; i < data.length; i += 4) {
+          // 增强对比度和亮度
+          data[i] = Math.min(255, Math.max(0, (data[i] - 128) * contrast + 128 + brightness));     // R
+          data[i + 1] = Math.min(255, Math.max(0, (data[i + 1] - 128) * contrast + 128 + brightness)); // G
+          data[i + 2] = Math.min(255, Math.max(0, (data[i + 2] - 128) * contrast + 128 + brightness)); // B
+        }
+        
+        modelRenderCtx.putImageData(imageData, 0, 0);
+        
       } catch (error) {
         console.warn('捕获3D模型渲染失败:', error);
       }
@@ -235,26 +322,25 @@
     
     // 🎯 绘制3D模型面部点位（带缩放和偏移）
     const drawFacePoints = () => {
-      if (!facePointsCtx || !ctrack) return;
-      
+      if (!facePointsCtx || !currentLandmarks) return;
+
       // 清空覆盖层画布
       facePointsCtx.clearRect(0, 0, facePointsCanvas.width, facePointsCanvas.height);
-      
-      // 检查是否有面部位置数据
-      if (ctrack.getCurrentPosition()) {
-        // 保存当前上下文状态
-        facePointsCtx.save();
-        
-        // 🎯 应用变换：偏移 + 缩放（识别3D模型，不需要翻转）
-        facePointsCtx.translate(modelOffsetX, modelOffsetY);
-        facePointsCtx.scale(modelScaleX, modelScaleY);
-        
-        // 使用 clmtrackr 内置的绘制方法（在变换后的坐标系中）
-        ctrack.draw(facePointsCanvas);
-        
-        // 恢复上下文状态
-        facePointsCtx.restore();
-      }
+
+      facePointsCtx.save();
+      // 🎯 应用变换：偏移 + 缩放（识别3D模型，不需要翻转）
+      facePointsCtx.translate(modelOffsetX, modelOffsetY);
+      facePointsCtx.scale(modelScaleX, modelScaleY);
+
+      // 绘制关键点
+      facePointsCtx.fillStyle = 'rgba(0,255,0,0.8)';
+      currentLandmarks.forEach(pt => {
+        facePointsCtx.beginPath();
+        facePointsCtx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+        facePointsCtx.fill();
+      });
+
+      facePointsCtx.restore();
     };
     
     // 🎯 更新面部识别状态显示
@@ -355,8 +441,33 @@
           <div style="margin-bottom: 10px; padding: 8px; background: #333; border-radius: 4px;">
             <div style="color: #00FF00; font-weight: bold; margin-bottom: 5px;">🎯 3D模型面部识别</div>
             <div id="faceTrackingStatus" style="color: #888;">初始化中...</div>
-            <div style="font-size: 10px; color: #666; margin-top: 3px;">识别3D脸部模型的面部特征</div>
+            <div style="font-size: 10px; color: #666; margin-top: 3px;">face-api.js + 1€滤波器 (低延迟抗抖动)</div>
+            
+            <details style="margin-top: 8px;">
+              <summary style="cursor: pointer; color: #FFD700; font-size: 11px;">🔧 1€滤波器参数调节</summary>
+              <div style="margin-top: 5px; font-size: 10px;">
+                <div style="margin-bottom: 5px;">
+                  <label>MinCutoff (平滑度): <span id="minCutoffValue">1.0</span></label>
+                  <input type="range" id="minCutoffSlider" min="0.1" max="2.0" step="0.1" value="1.0" style="width: 100%;">
+                </div>
+                <div style="margin-bottom: 5px;">
+                  <label>Beta (响应速度): <span id="betaValue">0.04</span></label>
+                  <input type="range" id="betaSlider" min="0.01" max="0.2" step="0.01" value="0.04" style="width: 100%;">
+                </div>
+                <div style="color: #666; font-size: 9px;">
+                  MinCutoff↓=更平滑但延迟↑<br/>
+                  Beta↑=跟随更快但可能抖动↑
+                </div>
+                <div style="margin-top: 8px; text-align: center;">
+                  <button id="smoothPreset" style="background: #555; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; margin-right: 3px; font-size: 9px;">平滑优先</button>
+                  <button id="balancedPreset" style="background: #555; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; margin-right: 3px; font-size: 9px;">平衡模式</button>
+                  <button id="responsivePreset" style="background: #555; color: white; border: none; padding: 3px 6px; border-radius: 3px; cursor: pointer; font-size: 9px;">响应优先</button>
+                </div>
+              </div>
+            </details>
           </div>
+          
+
           
           <div style="margin-bottom: 10px;">
             <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
@@ -412,8 +523,8 @@
           
           <div style="margin-top: 8px; font-size: 9px; color: #888; text-align: center;">
             配置自动同步到Texture版本<br/>
-            🚫 无光照材质 | MeshBasicMaterial<br/>
-            🎯 识别3D模型 + 面部轮廓显示
+            ☀️ Lambert光照材质 | MeshLambertMaterial<br/>
+            🎯 face-api.js + 1€滤波器 + 3D模型识别
           </div>
         </div>
       `;
@@ -524,6 +635,73 @@
       
       // 初始化显示
       updateColor();
+      
+      // 🔧 1€滤波器参数控制
+      const minCutoffSlider = document.getElementById('minCutoffSlider');
+      const betaSlider = document.getElementById('betaSlider');
+      const minCutoffValue = document.getElementById('minCutoffValue');
+      const betaValue = document.getElementById('betaValue');
+      
+      if (minCutoffSlider && betaSlider) {
+        minCutoffSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          minCutoffValue.textContent = value.toFixed(1);
+          // 更新所有滤波器的 minCutoff 参数
+          if (landmarkFilters) {
+            landmarkFilters.forEach(filter => {
+              filter.x.setMinCutoff(value);
+              filter.y.setMinCutoff(value);
+            });
+          }
+        });
+        
+        betaSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          betaValue.textContent = value.toFixed(2);
+          // 更新所有滤波器的 beta 参数
+          if (landmarkFilters) {
+            landmarkFilters.forEach(filter => {
+              filter.x.setBeta(value);
+              filter.y.setBeta(value);
+            });
+          }
+        });
+      }
+      
+      // 🎯 预设按钮事件处理
+      const smoothPreset = document.getElementById('smoothPreset');
+      const balancedPreset = document.getElementById('balancedPreset');
+      const responsivePreset = document.getElementById('responsivePreset');
+      
+      const applyPreset = (minCutoff, beta) => {
+        if (minCutoffSlider && betaSlider) {
+          minCutoffSlider.value = minCutoff;
+          betaSlider.value = beta;
+          minCutoffValue.textContent = minCutoff.toFixed(1);
+          betaValue.textContent = beta.toFixed(2);
+          
+          if (landmarkFilters) {
+            landmarkFilters.forEach(filter => {
+              filter.x.setMinCutoff(minCutoff);
+              filter.x.setBeta(beta);
+              filter.y.setMinCutoff(minCutoff);
+              filter.y.setBeta(beta);
+            });
+          }
+        }
+      };
+      
+      if (smoothPreset) {
+        smoothPreset.addEventListener('click', () => applyPreset(0.5, 0.02)); // 强平滑，低响应
+      }
+      if (balancedPreset) {
+        balancedPreset.addEventListener('click', () => applyPreset(1.0, 0.04)); // 默认平衡
+      }
+      if (responsivePreset) {
+        responsivePreset.addEventListener('click', () => applyPreset(1.5, 0.08)); // 弱平滑，高响应
+      }
+      
+
     };
     
     // 创建控制面板
@@ -558,9 +736,21 @@
       });
     }
 
-    // 🚫 移除光照 - 改为无光照渲染模式
-    // const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    // scene.add(light);
+    // ☀️ 添加多种光源：环境光 + 直射光 + 点光源
+    // 环境光 - 提供基础照明，亮度提高1.5倍
+    window.ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // 暗灰色，强度45% (0.3 * 1.5)
+    scene.add(window.ambientLight);
+    
+    // 直射光 - 主要光源，模拟太阳光
+    window.directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // 白色，强度80%
+    window.directionalLight.position.set(1, 1, 0.5); // 右上前方向
+    window.directionalLight.castShadow = false; // 不启用阴影（性能考虑）
+    scene.add(window.directionalLight);
+    
+    // 点光源 - 正前方补光
+    window.pointLight = new THREE.PointLight(0xffffff, 1.0, 0); // 白色，强度60%，衰减距离5
+    window.pointLight.position.set(0, 0, 2); // 正前方位置
+    scene.add(window.pointLight);
 
     // 脸部模型Avatar类
     class Avatar {
@@ -614,12 +804,12 @@
           
           const mesh = object;
           
-          // 🎨 转换为无光照材质并收集材质信息
+          // ☀️ 转换为光照材质并收集材质信息
           if (mesh.material) {
             if (Array.isArray(mesh.material)) {
               mesh.material.forEach((mat, index) => {
-                // 🚫 创建无光照材质替换原有材质
-                const unlitMaterial = new THREE.MeshBasicMaterial({
+                // ☀️ 创建光照材质替换原有材质
+                const litMaterial = new THREE.MeshLambertMaterial({
                   map: USE_CUSTOM_TEXTURE && this.customTexture ? this.customTexture : mat.map,
                   transparent: mat.transparent || false,
                   opacity: mat.opacity || 1.0,
@@ -631,21 +821,21 @@
                 });
                 
                 // 替换原材质
-                mesh.material[index] = unlitMaterial;
+                mesh.material[index] = litMaterial;
                 
                 if (USE_CUSTOM_TEXTURE && this.customTexture) {
-                  console.log(`✅ 已应用自定义贴图到无光照材质 ${index}`);
+                  console.log(`✅ 已应用自定义贴图到光照材质 ${index}`);
                 }
                 
-                this.materials.push(unlitMaterial);
+                this.materials.push(litMaterial);
                 this.originalColors.push({
-                  color: unlitMaterial.color.clone(),
-                  emissive: new THREE.Color(0, 0, 0)  // 无光照材质无需发光色
+                  color: litMaterial.color.clone(),
+                  emissive: new THREE.Color(0, 0, 0)  // 光照材质可选发光色
                 });
               });
             } else {
-              // 🚫 创建无光照材质替换原有材质
-              const unlitMaterial = new THREE.MeshBasicMaterial({
+              // ☀️ 创建光照材质替换原有材质
+              const litMaterial = new THREE.MeshLambertMaterial({
                 map: USE_CUSTOM_TEXTURE && this.customTexture ? this.customTexture : mesh.material.map,
                 transparent: mesh.material.transparent || false,
                 opacity: mesh.material.opacity || 1.0,
@@ -657,16 +847,16 @@
               });
               
               // 替换原材质
-              mesh.material = unlitMaterial;
+              mesh.material = litMaterial;
               
               if (USE_CUSTOM_TEXTURE && this.customTexture) {
-                console.log('✅ 已应用自定义贴图到无光照主材质');
+                console.log('✅ 已应用自定义贴图到光照主材质');
               }
               
-              this.materials.push(unlitMaterial);
+              this.materials.push(litMaterial);
               this.originalColors.push({
-                color: unlitMaterial.color.clone(),
-                emissive: new THREE.Color(0, 0, 0)  // 无光照材质无需发光色
+                color: litMaterial.color.clone(),
+                emissive: new THREE.Color(0, 0, 0)  // 光照材质可选发光色
               });
             }
           }
@@ -677,10 +867,10 @@
         
         this.gltf = gltf;
         console.log('✅ 脸部模型加载成功');
-        console.log('🚫 光照模式: 无光照 (MeshBasicMaterial)');
-        console.log('💡 移除的光源: HemisphereLight');
+        console.log('☀️ 光照模式: Lambert光照 (MeshLambertMaterial)');
+        console.log('💡 光源配置: 直射光 + 环境光 (暗)');
         console.log(`🎨 转换材质数量: ${this.materials.length}`);
-        console.log('🎯 面部识别: 识别3D模型面部特征');
+        console.log('🎯 face-api.js + 1€滤波器: 识别3D模型面部特征');
       }
       
       updateBlendshapes(blendshapes) {
@@ -844,19 +1034,22 @@
       // 初始化颜色采样系统
       initColorSampling();
       
-      // 🎯 初始化3D模型面部识别系统
-      const faceTrackingInitialized = initFaceTracking();
+      // 🎯 初始化3D模型面部识别系统 (异步)
+      const faceTrackingInitialized = await initFaceTracking();
       
       // 🎯 启动3D模型面部识别
       if (faceTrackingInitialized) {
         // 调整面部点位画布尺寸
         adjustFacePointsCanvas();
         
+        // 初始化1€滤波器
+        initLandmarkFilters();
+        
         // 延迟启动面部跟踪，等待3D模型渲染稳定
         setTimeout(() => {
           const trackingStarted = startFaceTracking();
           if (trackingStarted) {
-            updateFaceTrackingStatus('✅ 3D模型面部识别已启动');
+            updateFaceTrackingStatus('✅ 3D模型面部识别已启动 (1€滤波器)');
           } else {
             updateFaceTrackingStatus('❌ 3D模型面部识别启动失败');
           }
@@ -870,67 +1063,7 @@
         updateFaceTrackingStatus('❌ 3D模型面部识别初始化失败');
       }
       
-      // 添加视频流到右下角
-      const feedVideo = document.createElement('video');
-      feedVideo.id = 'video-feed';
-      feedVideo.style.cssText = `
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        width: 25vw;
-        z-index: 9999999;
-        transform: scaleX(-1);
-        border: 2px solid #FFD700;
-        border-radius: 8px;
-      `;
-      document.body.appendChild(feedVideo);
-      
-      feedVideo.srcObject = mindarThree.video.srcObject.clone();
-      feedVideo.play();
-      
-      // 添加切换按钮
-      const toggleButton = document.createElement('button');
-      toggleButton.id = 'toggle-video';
-      toggleButton.innerHTML = '隐藏视频';
-      toggleButton.style.cssText = `
-        position: fixed;
-        bottom: 10px;
-        right: 10px;
-        padding: 10px 20px;
-        background: rgba(255, 215, 0, 0.8);
-        color: white;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        font-family: Arial, sans-serif;
-        font-size: 14px;
-        z-index: 10000000;
-        transition: background 0.3s;
-      `;
-      
-      // 鼠标悬停效果
-      toggleButton.addEventListener('mouseenter', () => {
-        toggleButton.style.background = 'rgba(255, 215, 0, 1)';
-      });
-      
-      toggleButton.addEventListener('mouseleave', () => {
-        toggleButton.style.background = 'rgba(255, 215, 0, 0.8)';
-      });
-      
-      // 切换显示/隐藏功能
-      let videoVisible = true;
-      toggleButton.addEventListener('click', () => {
-        if (videoVisible) {
-          feedVideo.style.display = 'none';
-          toggleButton.innerHTML = '显示视频';
-        } else {
-          feedVideo.style.display = 'block';
-          toggleButton.innerHTML = '隐藏视频';
-        }
-        videoVisible = !videoVisible;
-      });
-      
-      document.body.appendChild(toggleButton);
+      // 🎯 专注于 3D 模型面部识别，不显示摄像机画面
       
       renderer.setAnimationLoop(() => {
         // 更新脸部模型表情
@@ -958,9 +1091,69 @@
         // 先渲染3D场景
         renderer.render(scene, camera);
         
-        // 🎯 捕获3D模型渲染结果进行面部识别
-        if (trackingStarted) {
+        // 🎯 捕获3D模型渲染结果进行面部识别 (face-api.js + 1€滤波器)
+        if (trackingStarted && modelRenderCanvas) {
+          // 捕获3D模型渲染结果
           captureAndAnalyze3DModel(renderer);
+          
+          // 使用 face-api.js 进行面部检测 - 持续检测但控制频率
+          detectionStats.totalAttempts++;
+          
+          if (detectionStats.totalAttempts % 2 === 0) { // 每两帧检测一次
+            (async () => {
+              try {
+                const detection = await faceapi.detectSingleFace(modelRenderCanvas, faceDetectorOptions).withFaceLandmarks(true);
+                
+                if (detection && detection.landmarks) {
+                  const landmarks = detection.landmarks.positions;
+                  const confidence = detection.detection.score;
+                  
+                  // 🎯 更新统计信息
+                  detectionStats.successfulDetections++;
+                  detectionStats.lastDetectionTime = performance.now();
+                  detectionStats.confidenceSum += confidence;
+                  detectionStats.avgConfidence = detectionStats.confidenceSum / detectionStats.successfulDetections;
+                  
+                  // 获取当前时间戳（秒）
+                  const timestamp = performance.now() / 1000;
+                  
+                  if (!currentLandmarks || !landmarkFilters) {
+                    // 首次检测：直接设置并初始化滤波器
+                    currentLandmarks = landmarks.map(pt => ({ x: pt.x, y: pt.y }));
+                    if (!landmarkFilters) {
+                      initLandmarkFilters();
+                    }
+                    console.log(`✅ 首次检测成功，置信度: ${confidence.toFixed(3)}`);
+                  } else {
+                    // 使用 1€ 滤波器平滑每个关键点
+                    for (let i = 0; i < landmarks.length && i < landmarkFilters.length; i++) {
+                      currentLandmarks[i].x = landmarkFilters[i].x.filter(landmarks[i].x, timestamp);
+                      currentLandmarks[i].y = landmarkFilters[i].y.filter(landmarks[i].y, timestamp);
+                    }
+                  }
+                  
+                  // 🎯 每100次成功检测更新一次状态显示
+                  if (detectionStats.successfulDetections % 100 === 0) {
+                    const successRate = ((detectionStats.successfulDetections / detectionStats.totalAttempts) * 100).toFixed(1);
+                    updateFaceTrackingStatus(`✅ 识别成功率: ${successRate}% | 平均置信度: ${detectionStats.avgConfidence.toFixed(3)}`);
+                  }
+                } else {
+                  // 🎯 检测失败统计
+                  const timeSinceLastDetection = performance.now() - detectionStats.lastDetectionTime;
+                  if (timeSinceLastDetection > 5000) { // 5秒没有检测到
+                    const successRate = ((detectionStats.successfulDetections / detectionStats.totalAttempts) * 100).toFixed(1);
+                    updateFaceTrackingStatus(`⚠️ 识别困难 | 成功率: ${successRate}% | 尝试调整光照或模型角度`);
+                  }
+                }
+              } catch (error) {
+                // 记录检测错误，但不刷屏
+                if (detectionStats.totalAttempts % 100 === 0) {
+                  console.warn('face-api.js 检测异常 (每100次报告一次):', error.message);
+                }
+              }
+            })();
+          }
+          
           drawFacePoints();
         }
         
