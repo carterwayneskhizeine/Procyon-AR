@@ -251,6 +251,11 @@
                 
                 // ⏱️ 帧率控制
                 this.lastDeformTime = 0; // 上次形变时间戳
+                this.deformFrameCounter = 0; // 形变帧计数，用于降低 load 频率
+                
+                // 🎭 丢帧策略
+                this.latestFrameData = null;   // 存放最后一帧 Blob/Base64
+                this.isDecodingFrame = false; // 是否有帧正在 decode
                 
                 this.initializeUI();
                 this.initFaceDeform();
@@ -578,8 +583,10 @@
 
                         const newVertices = (pModel.path && pModel.path.vertices) ? pModel.path.vertices.concat(extendVertices) : extendVertices;
 
-                        // 加载形变器，覆盖全画面
-                        this.faceDeformer.load(tempCanvas, newPos, pModel, newVertices);
+                        // 每3帧才重新加载纹理，其他帧仅 draw
+                        if (this.deformFrameCounter % 3 === 0) {
+                            this.faceDeformer.load(tempCanvas, newPos, pModel, newVertices);
+                        }
 
                         // 补全 interpolatedPoints 与 newPos 一致
                         interpolatedPoints = interpolatedPoints.concat(addPos);
@@ -605,6 +612,7 @@
                     // ⏱️ 帧率丢帧逻辑：限制到 ~20 FPS (>=50ms)
                     const now = performance.now();
                     if (now - this.lastDeformTime >= 50) {
+                        this.deformFrameCounter++;
                         this.faceDeformer.draw(interpolatedPoints);
                         this.lastDeformTime = now;
                     }
@@ -645,8 +653,13 @@
                         document.getElementById('connectionStatus').className = 'success';
                     };
 
+                    // 🎭 丢帧：始终只保留最新一帧
                     this.websocket.onmessage = (event) => {
-                        this.handleCompositeFrame(event.data);
+                        this.latestFrameData = event.data;
+                        // 如果当前没有在解码，则立即处理
+                        if (!this.isDecodingFrame) {
+                            this.decodeAndDrawLatestFrame();
+                        }
                     };
 
                     this.websocket.onclose = () => {
@@ -687,76 +700,72 @@
                 console.warn('⚠️ HTTP API 不可用，请使用 WebSocket 连接');
             }
 
-            handleCompositeFrame(data) {
+            // 🎭 解码并绘制最新帧（丢弃过期帧）
+            decodeAndDrawLatestFrame() {
+                const data = this.latestFrameData;
+                if (!data) return;
+                this.isDecodingFrame = true;
+
+                const img = new Image();
+                img.onload = () => {
+                    this.isDecodingFrame = false;
+                    this.handleCompositeFrameDecoded(img);
+                    // 如果在解码期间新帧又来了，再次处理
+                    if (this.latestFrameData !== data) {
+                        this.decodeAndDrawLatestFrame();
+                    }
+                };
+                img.onerror = (err) => {
+                    console.error('❌ 图片解码失败:', err);
+                    this.updateStatus('图片解码失败', 'error');
+                    this.isDecodingFrame = false;
+                };
+
+                if (data instanceof Blob) {
+                    img.src = URL.createObjectURL(data);
+                } else if (typeof data === 'string') {
+                    img.src = data;
+                }
+            }
+
+            // 🎭 原 handleCompositeFrame 逻辑拆分为绘制解码后 img
+            handleCompositeFrameDecoded(img) {
                 try {
-                    // 处理接收到的合成画面数据
-                    const img = new Image();
-                    
-                    img.onload = () => {
-                        // 更新画布尺寸（如果需要）
-                        if (this.canvas.width !== img.width || this.canvas.height !== img.height) {
-                            this.canvas.width = img.width;
-                            this.canvas.height = img.height;
-                            this.deformCanvas.width = img.width;
-                            this.deformCanvas.height = img.height;
-                            document.getElementById('resolution').textContent = `${img.width}x${img.height}`;
-                        }
-
-                        // 🎭 如果启用形变，先渲染到 deformCanvas
-                        let hasDeform = false;
-                        if (this.isDeformEnabled && this.isDeformReady) {
-                            this.performFaceDeform(img);
-                            hasDeform = true;
-                        }
-
-                        // 直接根据源帧尺寸计算，保持 1:1 像素映射，再乘用户缩放
-                        let canvasWidth = img.width * this.scale;
-                        let canvasHeight = img.height * this.scale;
-
-                        // 清屏
-                        this.ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-                        // 应用滤镜
-                        this.ctx.filter = `brightness(${this.brightness}) contrast(${this.contrast})`;
-
-                        // 保存状态并翻转
-                        this.ctx.save();
-                        this.ctx.scale(-1, 1);
-                        this.ctx.translate(-canvasWidth, 0);
-
-                        // 先绘制原始画面
-                        this.ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
-
-                        // 若有形变，再叠加形变后的画布（透明背景）
-                        if (hasDeform) {
-                            this.ctx.drawImage(this.deformCanvas, 0, 0, canvasWidth, canvasHeight);
-                        }
-
-                        // 恢复状态
-                        this.ctx.restore();
-
-                        // 重置滤镜
-                        this.ctx.filter = 'none';
-                         
-                        // 更新帧率计算
-                        this.updateFrameRate();
-                    };
-
-                    img.onerror = (error) => {
-                        console.error('❌ 图片加载失败:', error);
-                        this.updateStatus('图片加载失败', 'error');
-                    };
-
-                    // 根据数据类型加载图片
-                    if (data instanceof Blob) {
-                        img.src = URL.createObjectURL(data);
-                    } else if (typeof data === 'string') {
-                        img.src = data; // Base64 数据
+                    if (!img) return;
+                    // 更新尺寸等 (与旧逻辑一致)
+                    if (this.canvas.width !== img.width || this.canvas.height !== img.height) {
+                        this.canvas.width = img.width;
+                        this.canvas.height = img.height;
+                        this.deformCanvas.width = img.width;
+                        this.deformCanvas.height = img.height;
+                        document.getElementById('resolution').textContent = `${img.width}x${img.height}`;
                     }
 
+                    // 🎭 形变
+                    let hasDeform = false;
+                    if (this.isDeformEnabled && this.isDeformReady) {
+                        this.performFaceDeform(img);
+                        hasDeform = true;
+                    }
+
+                    // 绘制
+                    let canvasWidth = img.width * this.scale;
+                    let canvasHeight = img.height * this.scale;
+                    this.ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+                    this.ctx.filter = `brightness(${this.brightness}) contrast(${this.contrast})`;
+                    this.ctx.save();
+                    this.ctx.scale(-1, 1);
+                    this.ctx.translate(-canvasWidth, 0);
+                    this.ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+                    if (hasDeform) {
+                        this.ctx.drawImage(this.deformCanvas, 0, 0, canvasWidth, canvasHeight);
+                    }
+                    this.ctx.restore();
+                    this.ctx.filter = 'none';
+                    this.updateFrameRate();
                 } catch (error) {
-                    console.error('❌ 处理合成画面失败:', error);
-                    this.updateStatus('处理画面失败: ' + error.message, 'error');
+                    console.error('❌ 绘制帧失败:', error);
+                    this.updateStatus('绘制帧失败: ' + error.message, 'error');
                 }
             }
 

@@ -106,7 +106,7 @@
       let isCompositeEnabled = true;
       
       // =========================
-      // ��️ 功能开关：FaceMesh贴图层
+      // 🎯 功能开关：FaceMesh贴图层
       // true  - 启用贴图层（双层合成：摄像机 + FaceMesh）
       // false - 仅输出摄像机画面（单层）
       const USE_FACE_MESH_LAYER = false;
@@ -117,7 +117,7 @@
         console.log('🎯 初始化面部识别系统 (face-api.js)...');
 
         try {
-          // �� 优先尝试本地模型，失败时使用 CDN
+          // 🎯 优先尝试本地模型，失败时使用 CDN
           let modelLoaded = false;
           
           try {
@@ -244,7 +244,7 @@
           facePointsCanvas.style.width = container.clientWidth + 'px';
           facePointsCanvas.style.height = container.clientHeight + 'px';
           
-          // �� 计算视频缩放比例（仿照 MindAR 的缩放逻辑）
+          // 🎯 计算视频缩放比例（仿照 MindAR 的缩放逻辑）
           const videoRatio = videoElement.videoWidth / videoElement.videoHeight;
           const containerRatio = container.clientWidth / container.clientHeight;
           
@@ -761,7 +761,7 @@
               // 备选方案：通过HTTP API发送
               sendCompositeFrameHTTP(blob);
             }
-          }, 'image/jpeg', 0.85); // 使用JPEG格式，85%质量
+          }, 'image/jpeg', 0.5); // 使用JPEG格式，50%质量
           
         } catch (error) {
           console.error('❌ 发送合成画面失败:', error);
