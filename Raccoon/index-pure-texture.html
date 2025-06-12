@@ -105,59 +105,66 @@
       let websocketServer = null;
       let isCompositeEnabled = true;
       
-             // 🎯 初始化面部识别系统 (face-api.js)
-       const initFaceTracking = async () => {
-         console.log('🎯 初始化面部识别系统 (face-api.js)...');
+      // =========================
+      // ��️ 功能开关：FaceMesh贴图层
+      // true  - 启用贴图层（双层合成：摄像机 + FaceMesh）
+      // false - 仅输出摄像机画面（单层）
+      const USE_FACE_MESH_LAYER = false;
+      // =========================
+      
+      // 🎯 初始化面部识别系统 (face-api.js)
+      const initFaceTracking = async () => {
+        console.log('🎯 初始化面部识别系统 (face-api.js)...');
 
-         try {
-           // 🎯 优先尝试本地模型，失败时使用 CDN
-           let modelLoaded = false;
-           
-           try {
-             console.log('📦 尝试加载本地模型...');
-             await Promise.all([
-               faceapi.nets.tinyFaceDetector.loadFromUri('./models'),
-               faceapi.nets.faceLandmark68TinyNet.loadFromUri('./models')
-             ]);
-             modelLoaded = true;
-             console.log('✅ 本地模型加载成功');
-           } catch (localError) {
-             console.warn('⚠️ 本地模型加载失败，尝试CDN模型:', localError.message);
-             
-             const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
-             await Promise.all([
-               faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-               faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL)
-             ]);
-             modelLoaded = true;
-             console.log('✅ CDN模型加载成功');
-           }
-           
-           faceDetectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 256, scoreThreshold: 0.5 });
-           console.log('✅ face-api.js 模型加载完成');
-         } catch (error) {
-           console.error('❌ face-api.js 模型加载失败:', error);
-           return false;
-         }
+        try {
+          // �� 优先尝试本地模型，失败时使用 CDN
+          let modelLoaded = false;
+          
+          try {
+            console.log('📦 尝试加载本地模型...');
+            await Promise.all([
+              faceapi.nets.tinyFaceDetector.loadFromUri('./models'),
+              faceapi.nets.faceLandmark68TinyNet.loadFromUri('./models')
+            ]);
+            modelLoaded = true;
+            console.log('✅ 本地模型加载成功');
+          } catch (localError) {
+            console.warn('⚠️ 本地模型加载失败，尝试CDN模型:', localError.message);
+            
+            const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
+            await Promise.all([
+              faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+              faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL)
+            ]);
+            modelLoaded = true;
+            console.log('✅ CDN模型加载成功');
+          }
+          
+          faceDetectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 256, scoreThreshold: 0.5 });
+          console.log('✅ face-api.js 模型加载完成');
+        } catch (error) {
+          console.error('❌ face-api.js 模型加载失败:', error);
+          return false;
+        }
 
-         // 创建面部点位绘制画布
-         facePointsCanvas = document.createElement('canvas');
-         facePointsCanvas.id = 'face-points-overlay';
-         facePointsCanvas.style.position = 'absolute';
-         facePointsCanvas.style.top = '0px';
-         facePointsCanvas.style.left = '0px';
-         facePointsCanvas.style.pointerEvents = 'none';
-         facePointsCanvas.style.zIndex = '1000';
-         facePointsCtx = facePointsCanvas.getContext('2d');
+        // 创建面部点位绘制画布
+        facePointsCanvas = document.createElement('canvas');
+        facePointsCanvas.id = 'face-points-overlay';
+        facePointsCanvas.style.position = 'absolute';
+        facePointsCanvas.style.top = '0px';
+        facePointsCanvas.style.left = '0px';
+        facePointsCanvas.style.pointerEvents = 'none';
+        facePointsCanvas.style.zIndex = '1000';
+        facePointsCtx = facePointsCanvas.getContext('2d');
 
-         // 添加到容器
-         const container = document.querySelector('#container');
-         if (container) {
-           container.appendChild(facePointsCanvas);
-         }
+        // 添加到容器
+        const container = document.querySelector('#container');
+        if (container) {
+          container.appendChild(facePointsCanvas);
+        }
 
-         return true;
-       };
+        return true;
+      };
       
       // 🎯 初始化 1€ 滤波器（68个关键点 × 2坐标 = 136个滤波器）
       const initLandmarkFilters = () => {
@@ -194,81 +201,79 @@
         return true;
       };
       
-             // 🎯 绘制面部点位（带缩放和偏移）
-       const drawFacePoints = () => {
-         if (!facePointsCtx || !currentLandmarks) return;
+      // 🎯 绘制面部点位（带缩放和偏移）
+      const drawFacePoints = () => {
+        if (!facePointsCtx || !currentLandmarks) return;
 
-         // 清空画布
-         facePointsCtx.clearRect(0, 0, facePointsCanvas.width, facePointsCanvas.height);
+        // 清空画布
+        facePointsCtx.clearRect(0, 0, facePointsCanvas.width, facePointsCanvas.height);
 
-         facePointsCtx.save();
-         // 🎯 应用变换：偏移 + 缩放 + 水平翻转
-         facePointsCtx.translate(videoOffsetX, videoOffsetY);
-         facePointsCtx.scale(videoScaleX, videoScaleY);
-         facePointsCtx.scale(-1, 1); // 水平翻转匹配视频
-         facePointsCtx.translate(-facePointsCanvas.width / videoScaleX, 0);
+        facePointsCtx.save();
+        // 🎯 应用变换：偏移 + 缩放 + 水平翻转
+        facePointsCtx.translate(videoOffsetX, videoOffsetY);
+        facePointsCtx.scale(videoScaleX, videoScaleY);
+        facePointsCtx.scale(-1, 1); // 水平翻转匹配视频
+        facePointsCtx.translate(-facePointsCanvas.width / videoScaleX, 0);
 
-         // 绘制关键点
-         facePointsCtx.fillStyle = 'rgba(0,255,0,0.8)';
-         currentLandmarks.forEach(pt => {
-           facePointsCtx.beginPath();
-           facePointsCtx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
-           facePointsCtx.fill();
-         });
+        // 绘制关键点
+        facePointsCtx.fillStyle = 'rgba(0,255,0,0.8)';
+        currentLandmarks.forEach(pt => {
+          facePointsCtx.beginPath();
+          facePointsCtx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+          facePointsCtx.fill();
+        });
 
-         facePointsCtx.restore();
-       };
+        facePointsCtx.restore();
+      };
       
+      // 🎯 调整面部点位画布尺寸和缩放比例
+      let videoScaleX = 1;
+      let videoScaleY = 1;
+      let videoOffsetX = 0;
+      let videoOffsetY = 0;
       
-      
-             // 🎯 调整面部点位画布尺寸和缩放比例
-       let videoScaleX = 1;
-       let videoScaleY = 1;
-       let videoOffsetX = 0;
-       let videoOffsetY = 0;
-       
-       const adjustFacePointsCanvas = (videoElement) => {
-         if (!facePointsCanvas || !videoElement) return;
-         
-         const container = document.querySelector('#container');
-         
-         if (container && videoElement.videoWidth && videoElement.videoHeight) {
-           // 设置画布尺寸与容器一致
-           facePointsCanvas.width = container.clientWidth;
-           facePointsCanvas.height = container.clientHeight;
-           facePointsCanvas.style.width = container.clientWidth + 'px';
-           facePointsCanvas.style.height = container.clientHeight + 'px';
-           
-           // 🎯 计算视频缩放比例（仿照 MindAR 的缩放逻辑）
-           const videoRatio = videoElement.videoWidth / videoElement.videoHeight;
-           const containerRatio = container.clientWidth / container.clientHeight;
-           
-           let displayWidth, displayHeight;
-           if (videoRatio > containerRatio) {
-             displayHeight = container.clientHeight;
-             displayWidth = displayHeight * videoRatio;
-           } else {
-             displayWidth = container.clientWidth;
-             displayHeight = displayWidth / videoRatio;
-           }
-           
-           // 计算缩放比例和偏移量
-           videoScaleX = displayWidth / videoElement.videoWidth;
-           videoScaleY = displayHeight / videoElement.videoHeight;
-           videoOffsetX = (container.clientWidth - displayWidth) / 2;
-           videoOffsetY = (container.clientHeight - displayHeight) / 2;
-           
-           console.log('🎯 画布尺寸和缩放比例调整:', {
-             canvasSize: `${facePointsCanvas.width}x${facePointsCanvas.height}`,
-             videoOriginalSize: `${videoElement.videoWidth}x${videoElement.videoHeight}`,
-             videoDisplaySize: `${displayWidth}x${displayHeight}`,
-             scaleX: videoScaleX,
-             scaleY: videoScaleY,
-             offsetX: videoOffsetX,
-             offsetY: videoOffsetY
-           });
-         }
-       };
+      const adjustFacePointsCanvas = (videoElement) => {
+        if (!facePointsCanvas || !videoElement) return;
+        
+        const container = document.querySelector('#container');
+        
+        if (container && videoElement.videoWidth && videoElement.videoHeight) {
+          // 设置画布尺寸与容器一致
+          facePointsCanvas.width = container.clientWidth;
+          facePointsCanvas.height = container.clientHeight;
+          facePointsCanvas.style.width = container.clientWidth + 'px';
+          facePointsCanvas.style.height = container.clientHeight + 'px';
+          
+          // �� 计算视频缩放比例（仿照 MindAR 的缩放逻辑）
+          const videoRatio = videoElement.videoWidth / videoElement.videoHeight;
+          const containerRatio = container.clientWidth / container.clientHeight;
+          
+          let displayWidth, displayHeight;
+          if (videoRatio > containerRatio) {
+            displayHeight = container.clientHeight;
+            displayWidth = displayHeight * videoRatio;
+          } else {
+            displayWidth = container.clientWidth;
+            displayHeight = displayWidth / videoRatio;
+          }
+          
+          // 计算缩放比例和偏移量
+          videoScaleX = displayWidth / videoElement.videoWidth;
+          videoScaleY = displayHeight / videoElement.videoHeight;
+          videoOffsetX = (container.clientWidth - displayWidth) / 2;
+          videoOffsetY = (container.clientHeight - displayHeight) / 2;
+          
+          console.log('🎯 画布尺寸和缩放比例调整:', {
+            canvasSize: `${facePointsCanvas.width}x${facePointsCanvas.height}`,
+            videoOriginalSize: `${videoElement.videoWidth}x${videoElement.videoHeight}`,
+            videoDisplaySize: `${displayWidth}x${displayHeight}`,
+            scaleX: videoScaleX,
+            scaleY: videoScaleY,
+            offsetX: videoOffsetX,
+            offsetY: videoOffsetY
+          });
+        }
+      };
       
       // 创建颜色控制面板
       const createColorControlPanel = () => {
@@ -278,11 +283,11 @@
           <div style="position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; z-index: 1001; width: 250px;">
             <h3 style="margin: 0 0 10px 0; color: #FFD700;">🎨 共享调色板 + 🎯 面部识别</h3>
             
-                         <div style="margin-bottom: 10px; padding: 8px; background: #333; border-radius: 4px;">
-               <div style="color: #00FF00; font-weight: bold; margin-bottom: 5px;">🎯 面部识别状态</div>
-               <div id="faceTrackingStatus" style="color: #888;">初始化中...</div>
-               <div style="font-size: 10px; color: #666; margin-top: 3px;">face-api.js + 1€滤波器 (低延迟抗抖动)</div>
-             </div>
+            <div style="margin-bottom: 10px; padding: 8px; background: #333; border-radius: 4px;">
+              <div style="color: #00FF00; font-weight: bold; margin-bottom: 5px;">🎯 面部识别状态</div>
+              <div id="faceTrackingStatus" style="color: #888;">初始化中...</div>
+              <div style="font-size: 10px; color: #666; margin-top: 3px;">face-api.js + 1€滤波器 (低延迟抗抖动)</div>
+            </div>
             
             <div style="margin-bottom: 10px;">
               <label style="display: block; margin-bottom: 5px;">颜色模式:</label>
@@ -719,7 +724,7 @@
           
           // 第二层：获取Three.js渲染结果
           const threeCanvas = threeRenderer.domElement;
-          if (threeCanvas) {
+          if (USE_FACE_MESH_LAYER && threeCanvas) {
             // 设置混合模式为正常模式，确保真实像素合成
             compositeCtx.globalCompositeOperation = 'source-over';
             
@@ -1043,71 +1048,74 @@
       // const light = new THREE.HemisphereLight( 0xffffff, 0xbbbbff, 1 );
       // scene.add(light);
       
-      const faceMesh = mindarThree.addFaceMesh();
-      const texture = new THREE.TextureLoader().load('../enhanced_texture.png');
-      
-      // �� 加载透明度遮罩贴图 (眼睛和嘴部透明)
-      const alphaTexture = new THREE.TextureLoader().load('../canonical_face_eyes.png');
-      
-      // 🎨 使用自定义Shader Material来实现反转的透明度遮罩
-      const vertexShader = `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `;
-      
-      const fragmentShader = `
-        uniform sampler2D map;
-        uniform sampler2D alphaMap;
-        uniform float opacity;
-        uniform vec3 color;
-        varying vec2 vUv;
+      let faceMesh = null;
+      if (USE_FACE_MESH_LAYER) {
+        faceMesh = mindarThree.addFaceMesh();
+        const texture = new THREE.TextureLoader().load('../enhanced_texture.png');
         
-        void main() {
-          vec4 texColor = texture2D(map, vUv);
-          float alpha = texture2D(alphaMap, vUv).r;
+        // 🎨 加载透明度遮罩贴图 (眼睛和嘴部透明)
+        const alphaTexture = new THREE.TextureLoader().load('../canonical_face_eyes.png');
+        
+        // 🎨 使用自定义Shader Material来实现反转的透明度遮罩
+        const vertexShader = `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `;
+        
+        const fragmentShader = `
+          uniform sampler2D map;
+          uniform sampler2D alphaMap;
+          uniform float opacity;
+          uniform vec3 color;
+          varying vec2 vUv;
           
-          // 🎭 反转Alpha通道: 黑色(0)=不透明(1), 白色(1)=透明(0)
-          alpha = 1.0 - alpha;
-          
-          // 结合材质透明度和遮罩透明度
-          alpha = alpha * opacity;
-          
-          gl_FragColor = vec4(texColor.rgb * color, alpha);
-        }
-      `;
-      
-      // 🎨 替换为自定义Shader材质实现透明度遮罩
-      unlitMaterial = new THREE.ShaderMaterial({
-        uniforms: {
-          map: { value: texture },
-          alphaMap: { value: alphaTexture },
-          opacity: { value: materialOpacity },
-          color: { value: new THREE.Color(1, 1, 1) }
-        },
-        vertexShader: vertexShader,
-        fragmentShader: fragmentShader,
-        transparent: true,
-        depthWrite: false,
-        fog: false
-      });
-      
-      faceMesh.material = unlitMaterial;
-      
-      // 保存原始材质颜色 (Shader材质)
-      originalMaterial = {
-        color: unlitMaterial.uniforms.color.value.clone()
-      };
-      
-      // 🔍 调试信息 - 显示材质类型
-      console.log('🎨 材质类型:', unlitMaterial.type);
-      console.log('🚫 光照模式: 无光照 (ShaderMaterial)');
-      console.log('🔍 透明度模式: 半透明 + 透明度遮罩 (opacity:', materialOpacity + ')');
-      console.log('🎭 透明度遮罩: canonical_face_eyes.png (黑色=不透明, 白色=透明)');
-      console.log('💡 移除的光源: HemisphereLight');
-               console.log('🎯 face-api.js 面部检测');
+          void main() {
+            vec4 texColor = texture2D(map, vUv);
+            float alpha = texture2D(alphaMap, vUv).r;
+            
+            // 🎭 反转Alpha通道: 黑色(0)=不透明(1), 白色(1)=透明(0)
+            alpha = 1.0 - alpha;
+            
+            // 结合材质透明度和遮罩透明度
+            alpha = alpha * opacity;
+            
+            gl_FragColor = vec4(texColor.rgb * color, alpha);
+          }
+        `;
+        
+        // 🎨 替换为自定义Shader材质实现透明度遮罩
+        unlitMaterial = new THREE.ShaderMaterial({
+          uniforms: {
+            map: { value: texture },
+            alphaMap: { value: alphaTexture },
+            opacity: { value: materialOpacity },
+            color: { value: new THREE.Color(1, 1, 1) }
+          },
+          vertexShader: vertexShader,
+          fragmentShader: fragmentShader,
+          transparent: true,
+          depthWrite: false,
+          fog: false
+        });
+        
+        faceMesh.material = unlitMaterial;
+        
+        // 保存原始材质颜色 (Shader材质)
+        originalMaterial = {
+          color: unlitMaterial.uniforms.color.value.clone()
+        };
+        
+        // 🔍 调试信息 - 显示材质类型
+        console.log('🎨 材质类型:', unlitMaterial.type);
+        console.log('🚫 光照模式: 无光照 (ShaderMaterial)');
+        console.log('🔍 透明度模式: 半透明 + 透明度遮罩 (opacity:', materialOpacity + ')');
+        console.log('🎭 透明度遮罩: canonical_face_eyes.png (黑色=不透明, 白色=透明)');
+        console.log('💡 移除的光源: HemisphereLight');
+        console.log('🎯 face-api.js 面部检测');
+      }
       
       scene.add(faceMesh);
       
@@ -1158,12 +1166,14 @@
         }
         
         renderer.setAnimationLoop(async () => {
-          // 颜色处理
-          if (useAutoColor) {
-            const faceColor = sampleFaceColor(mindarThree.video);
-            applyColorToFaceMesh(faceMesh, faceColor, colorIntensity, colorMode);
-          } else {
-            applyColorToFaceMesh(faceMesh, customColor, colorIntensity, colorMode);
+          // 颜色处理（仅在启用 FaceMesh 层时执行）
+          if (USE_FACE_MESH_LAYER) {
+            if (useAutoColor) {
+              const faceColor = sampleFaceColor(mindarThree.video);
+              applyColorToFaceMesh(faceMesh, faceColor, colorIntensity, colorMode);
+            } else {
+              applyColorToFaceMesh(faceMesh, customColor, colorIntensity, colorMode);
+            }
           }
           
           // 🎯 关键点检测与绘制 (使用1€滤波器)
