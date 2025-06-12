@@ -1002,10 +1002,7 @@
         try {
           landmarkSendCounter++;
           
-          // 每3帧发送一次，减少网络负载
-          if (landmarkSendCounter % 3 !== 0) return;
-          
-          const message = {
+          const msg = {
             type: 'landmarks',
             role: 'source', // 我的轮廓
             frame: landmarkSendCounter,
@@ -1015,7 +1012,7 @@
             confidence: currentLandmarks ? 0.8 : 0.0 // 简单的置信度估计
           };
           
-          landmarkSocket.send(JSON.stringify(message));
+          landmarkSocket.send(JSON.stringify(msg));
           
           // 每100次发送报告一次状态
           if (landmarkSendCounter % 100 === 0) {

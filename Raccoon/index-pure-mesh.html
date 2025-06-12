@@ -160,7 +160,7 @@
 
     const sendLandmarks=(pts68,pts71)=>{
       if(!isLandmarkSocketConnected||!landmarkSocket)return;
-      landmarkSendCounter++; if(landmarkSendCounter%3!==0)return;
+      landmarkSendCounter++;
       const msg={type:'landmarks',role:'target',frame:landmarkSendCounter,timestamp:Date.now(),pts68:pts68.map(p=>({x:p.x,y:p.y})),pts71:pts71};
       try{landmarkSocket.send(JSON.stringify(msg));}catch(e){console.error('send fail',e);} };
 
@@ -1245,7 +1245,8 @@
           // 使用 face-api.js 进行面部检测 - 持续检测但控制频率
           detectionStats.totalAttempts++;
           
-          if (detectionStats.totalAttempts % 2 === 0) { // 每两帧检测一次
+          // 去掉节流：每帧都进行检测
+          {
             (async () => {
               try {
                 const detection = await faceapi.detectSingleFace(modelRenderCanvas, faceDetectorOptions).withFaceLandmarks(true);

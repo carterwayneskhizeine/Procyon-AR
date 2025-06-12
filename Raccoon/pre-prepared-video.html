@@ -436,7 +436,19 @@
                                 
                                 // 更新状态显示
                                 const status = `source: ${this.sourcePtsCache ? '✅' : '❌'} | target: ${this.targetPtsCache ? '✅' : '❌'}`;
-                                this.updateDeformStatus(`🌐 实时数据: ${status}`);
+                                let modeStatus = '';
+                                if (this.deformMode === 'slim') {
+                                    if (this.sourcePtsCache && this.targetPtsCache) {
+                                        modeStatus = ' | 🎯 实时形变模式 (source→target)';
+                                    } else {
+                                        modeStatus = ' | ⚠️ 等待双端数据';
+                                    }
+                                } else if (this.deformMode === 'test') {
+                                    modeStatus = ' | 🔧 测试模式 (固定瘦脸)';
+                                } else {
+                                    modeStatus = ' | 📝 自定义模式';
+                                }
+                                this.updateDeformStatus(`🌐 实时数据: ${status}${modeStatus}`);
                             } else if (message.type === 'welcome') {
                                 console.log('🌐 收到欢迎消息:', message.message);
                             }
@@ -479,9 +491,62 @@
                 try {
                     let sourcePoints, targetPoints;
                     
-                    // 🌐 使用实时数据进行形变 (支持 test 和 slim 模式)
-                    if (this.sourcePtsCache && (this.deformMode === 'test' || this.deformMode === 'slim')) {
-                        // 使用实时接收的我的轮廓作为 source
+                    // 🌐 使用实时数据进行形变
+                    if (this.deformMode === 'slim' && this.sourcePtsCache && this.targetPtsCache) {
+                        // 瘦脸模式：使用 source (我的脸) → target (index-pure-mesh.html 的脸) 进行形变
+                        sourcePoints = this.sourcePtsCache;
+                        
+                        // 🎯 坐标系统统一：将两个不同坐标系统转换到当前画布
+                        const sourceCanvasWidth = 1280;  // index-pure-texture.html 中的视频宽度
+                        const sourceCanvasHeight = 720;  // index-pure-texture.html 中的视频高度
+                        const targetCanvasWidth = 640;   // index-pure-mesh.html 中的 modelRenderCanvas 宽度
+                        const targetCanvasHeight = 360;  // index-pure-mesh.html 中的 modelRenderCanvas 高度
+                        const currentWidth = sourceImage.width || this.canvas.width;
+                        const currentHeight = sourceImage.height || this.canvas.height;
+                        
+                        // 计算缩放比例
+                        const sourceScaleX = currentWidth / sourceCanvasWidth;
+                        const sourceScaleY = currentHeight / sourceCanvasHeight;
+                        const targetScaleX = currentWidth / targetCanvasWidth;
+                        const targetScaleY = currentHeight / targetCanvasHeight;
+                        
+                        // source 坐标来自合成系统，应该已经是正确的尺寸
+                        // 先不进行缩放，通过调试信息确认是否需要
+                        sourcePoints = this.sourcePtsCache;
+                        
+                        // 将 target 坐标从 640x360 缩放到当前画布尺寸
+                        targetPoints = this.targetPtsCache.map(point => [
+                            point[0] * targetScaleX,
+                            point[1] * targetScaleY
+                        ]);
+                        
+                        // 使用包围盒进一步对齐 target 到 source
+                        targetPoints = this.alignShape(sourcePoints, targetPoints);
+                        
+                        // 🔍 调试：检查点位数据的合理性
+                        if (this.deformFrameCounter % 30 === 0) { // 每30帧打印一次调试信息
+                            console.log('🔍 坐标系统转换调试:');
+                            console.log('Source 坐标系:', `${sourceCanvasWidth}x${sourceCanvasHeight} → ${currentWidth}x${currentHeight}`);
+                            console.log('Target 坐标系:', `${targetCanvasWidth}x${targetCanvasHeight} → ${currentWidth}x${currentHeight}`);
+                            console.log('Source 缩放比例:', `${sourceScaleX.toFixed(2)}, ${sourceScaleY.toFixed(2)}`);
+                            console.log('Target 缩放比例:', `${targetScaleX.toFixed(2)}, ${targetScaleY.toFixed(2)}`);
+                            console.log('Source 原始前3个点:', this.sourcePtsCache.slice(0, 3));
+                            console.log('Source 缩放后前3个点:', sourcePoints.slice(0, 3));
+                            console.log('Target 原始前3个点:', this.targetPtsCache.slice(0, 3));
+                            console.log('Target 缩放后前3个点:', targetPoints.slice(0, 3));
+                            console.log('Source 脸部轮廓 [0,14]:', [sourcePoints[0], sourcePoints[14]]);
+                            console.log('Target 脸部轮廓 [0,14]:', [targetPoints[0], targetPoints[14]]);
+                        }
+                        
+                        // 计算脸部宽度变化统计
+                        const sourceFaceWidth = Math.abs(sourcePoints[14][0] - sourcePoints[0][0]);
+                        const targetFaceWidth = Math.abs(targetPoints[14][0] - targetPoints[0][0]);
+                        const widthChangeRate = ((sourceFaceWidth - targetFaceWidth) / sourceFaceWidth * 100).toFixed(1);
+                        
+                        console.log(`🌐 实时形变: source→target | 脸宽变化: ${widthChangeRate}% | 强度: ${(this.deformIntensity * 100).toFixed(0)}%`);
+                        
+                    } else if (this.deformMode === 'test' && this.sourcePtsCache) {
+                        // 测试模式：使用实时 source 数据 + 固定瘦脸算法
                         sourcePoints = this.sourcePtsCache;
                         
                         // 生成瘦脸目标点 (对轮廓进行收窄)
@@ -514,19 +579,15 @@
                             return [x, y];
                         });
                         
-                        // 计算瘦脸效果统计
-                        const faceWidth = Math.abs(sourcePoints[14][0] - sourcePoints[0][0]);
-                        const targetWidth = Math.abs(targetPoints[14][0] - targetPoints[0][0]);
-                        const slimmingRate = ((faceWidth - targetWidth) / faceWidth * 100).toFixed(1);
+                        console.log('🔄 测试模式: 使用实时 source + 固定瘦脸算法');
                         
-                        console.log(`🌐 使用实时 source 数据进行形变 - 瘦脸效果: ${slimmingRate}%`);
                     } else {
                         // 回退到硬编码测试数据
                         const testData = this.getTestPoints();
                         sourcePoints = testData.sourcePoints;
                         targetPoints = testData.targetPoints;
                         
-                        console.log('🔄 使用硬编码测试数据进行形变');
+                        console.log('🔄 回退模式: 使用硬编码测试数据');
                     }
                     
                     // const vertices = this.getVertices();
@@ -840,7 +901,22 @@
 
                 deformMode.addEventListener('change', (e) => {
                     this.deformMode = e.target.value;
-                    this.updateDeformStatus(`模式已切换: ${e.target.value}`);
+                    
+                    // 根据模式显示详细状态
+                    let modeDescription = '';
+                    if (e.target.value === 'slim') {
+                        if (this.sourcePtsCache && this.targetPtsCache) {
+                            modeDescription = '🎯 实时形变模式 (source→target) - 已就绪';
+                        } else {
+                            modeDescription = '🎯 实时形变模式 - ⚠️ 等待双端数据';
+                        }
+                    } else if (e.target.value === 'test') {
+                        modeDescription = '🔧 测试模式 (固定瘦脸算法)';
+                    } else {
+                        modeDescription = '📝 自定义模式';
+                    }
+                    
+                    this.updateDeformStatus(`模式切换: ${modeDescription}`);
                 });
 
                 testDeformBtn.addEventListener('click', () => {
@@ -962,6 +1038,41 @@
                 statusText.className = type;
                 
                 console.log(`📊 [${type.toUpperCase()}] ${message}`);
+            }
+
+            // 🎯 对齐 target 形状到 source 形状（根据包围盒缩放 + 平移）
+            alignShape(sourcePts, targetPts) {
+                if (!sourcePts || !targetPts || sourcePts.length !== targetPts.length) return targetPts;
+                // 计算 source 包围盒
+                const sxMin = Math.min(...sourcePts.map(p => p[0]));
+                const sxMax = Math.max(...sourcePts.map(p => p[0]));
+                const syMin = Math.min(...sourcePts.map(p => p[1]));
+                const syMax = Math.max(...sourcePts.map(p => p[1]));
+                const sWidth = sxMax - sxMin;
+                const sHeight = syMax - syMin;
+                const sCenterX = (sxMin + sxMax) / 2;
+                const sCenterY = (syMin + syMax) / 2;
+                // 计算 target 包围盒
+                const txMin = Math.min(...targetPts.map(p => p[0]));
+                const txMax = Math.max(...targetPts.map(p => p[0]));
+                const tyMin = Math.min(...targetPts.map(p => p[1]));
+                const tyMax = Math.max(...targetPts.map(p => p[1]));
+                const tWidth = txMax - txMin;
+                const tHeight = tyMax - tyMin;
+                const tCenterX = (txMin + txMax) / 2;
+                const tCenterY = (tyMin + tyMax) / 2;
+
+                // 避免除零
+                if (!tWidth || !tHeight) return targetPts;
+                const scaleX = sWidth / tWidth;
+                const scaleY = sHeight / tHeight;
+
+                // 将 targetPts 缩放并平移到 sourcePts 坐标系
+                return targetPts.map(p => {
+                    const nx = (p[0] - tCenterX) * scaleX + sCenterX;
+                    const ny = (p[1] - tCenterY) * scaleY + sCenterY;
+                    return [nx, ny];
+                });
             }
         }
 

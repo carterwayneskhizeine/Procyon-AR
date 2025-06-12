@@ -1,5 +1,13 @@
 const WebSocket = require('ws');
 
+// ==================================================
+// 可开关：是否将 source/target 点位写入 swap_point 目录
+// true  = 开启写文件
+// false = 关闭写文件（仅转发，不落盘）
+// 也可以通过环境变量 SWITCH_SWAP_POINT 控制
+// ==================================================
+const ENABLE_SWAP_POINT = process.env.SWITCH_SWAP_POINT !== 'false';
+
 console.log('🎯 启动面部关键点传输服务器...');
 
 // 创建 WebSocket 服务器，监听 3003 端口
@@ -68,6 +76,27 @@ wss.on('connection', (ws, request) => {
         
         clients.receiver.send(JSON.stringify(relayMessage));
         stats.messagesRelayed++;
+        
+        // === 新增: 将 source/target 点位写入 swap_point 文件夹 ===
+        try {
+          if (ENABLE_SWAP_POINT) {
+            const fs = require('fs');
+            const path = require('path');
+            const saveDir = path.join(__dirname, 'swap_point');
+            if (!fs.existsSync(saveDir)) {
+              fs.mkdirSync(saveDir, { recursive: true });
+            }
+            const frameId = message.frame !== undefined ? message.frame : Date.now();
+            const fileName = `${clientType}_${frameId}.json`;
+            fs.writeFile(path.join(saveDir, fileName), JSON.stringify(message, null, 2), (err) => {
+              if (err) {
+                console.error('❌ 无法保存 swap_point 文件:', err.message);
+              }
+            });
+          }
+        } catch (fsErr) {
+          console.error('❌ 写入 swap_point 失败:', fsErr.message);
+        }
         
         console.log(`🔄 转发关键点: ${clientType} → receiver (${message.pts71?.length || message.pts68?.length || 0} 个点)`);
       }
